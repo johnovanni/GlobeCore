@@ -1,0 +1,3 @@
+src/GlobeCore.Earth/Assets/*.geojson -text
+src/GlobeCore.Earth/Assets/*.jpg binary
+tests/Samples/*.jpg binary

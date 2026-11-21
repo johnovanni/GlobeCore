@@ -21,8 +21,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="..\Samples\**" CopyToOutputDirectory="PreserveNewest" LinkBase="Samples" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\GlobeCore\GlobeCore.csproj" />
     <ProjectReference Include="..\..\src\GlobeCore.Wpf\GlobeCore.Wpf.csproj" />
+    <ProjectReference Include="..\..\src\GlobeCore.Earth\GlobeCore.Earth.csproj" />
   </ItemGroup>
 
 </Project>

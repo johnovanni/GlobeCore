@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Windows and WPF: the Blue Marble is decoded (and scaled while decoding) with WPF imaging. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>GlobeCore.Earth</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Resource names: GlobeCore.Earth.Assets.<file>. -->
+    <EmbeddedResource Include="Assets\**" Exclude="Assets\README.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\GlobeCore\GlobeCore.csproj" />
+    <ProjectReference Include="..\GlobeCore.Wpf\GlobeCore.Wpf.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="GlobeCore.Tests" />
+    <InternalsVisibleTo Include="EarthWatch3D.Tests" />
+    <InternalsVisibleTo Include="EarthRelief3D.Tests" />
+  </ItemGroup>
+
+</Project>
