@@ -1,6 +1,7 @@
 namespace GlobeCore.Storage;
 
-internal static class AtomicFile
+/// <summary>Writes files so a reader never sees a half-written one, and a failed write never throws for I/O reasons.</summary>
+public static class AtomicFile
 {
     private const int Attempts = 3;
     private static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(100);
@@ -9,10 +10,18 @@ internal static class AtomicFile
     /// Writes to <c>file.tmp</c>, then moves it over <paramref name="file"/>, retrying the move (e.g. while an
     /// antivirus scan holds the destination). Returns false, leaving no .tmp behind, if it still fails.
     /// </summary>
+    /// <param name="file">Destination; its folder is created if missing.</param>
+    /// <param name="text">Written as UTF-8.</param>
+    /// <param name="error">The I/O failure when this returns false; otherwise null.</param>
+    /// <returns>True if the file was replaced.</returns>
     public static bool TryWriteAllText(string file, string text, out Exception? error)
         => TryWrite(file, tmp => File.WriteAllText(tmp, text), out error);
 
     /// <summary>Like <see cref="TryWriteAllText"/>, for bytes.</summary>
+    /// <param name="file">Destination; its folder is created if missing.</param>
+    /// <param name="bytes">The new content.</param>
+    /// <param name="error">The I/O failure when this returns false; otherwise null.</param>
+    /// <returns>True if the file was replaced.</returns>
     public static bool TryWriteAllBytes(string file, byte[] bytes, out Exception? error)
         => TryWrite(file, tmp => File.WriteAllBytes(tmp, bytes), out error);
 

@@ -5,19 +5,20 @@ using GlobeCore.Time;
 namespace GlobeCore.Logging;
 
 /// <summary>
-/// Rolling log: one file per local day (<c>earthwatch3d-yyyyMMdd.log</c>), UTC timestamps inside the lines.
-/// Thread-safe. Files last written more than 7 days ago are deleted when the log is created.
+/// Rolling log: one file per local day (<c>{filePrefix}yyyyMMdd.log</c>, for example <c>earthwatch3d-20261112.log</c>), UTC timestamps inside the lines.
+/// Thread-safe. Files with this prefix last written more than 7 days ago are deleted when the log is created; other files
+/// (including another app's logs in the same folder) are left alone.
 /// Each day's file is capped (20 MB by default): when the next line would pass the cap, one "log cap reached" line is
 /// written and the rest of that day's lines are dropped, so a fault that repeats endlessly cannot fill the disk.
 /// Logging never throws.
 /// </summary>
 public sealed class FileLog : IAppLog, IDisposable
 {
-    private const string Prefix = "earthwatch3d-";
     private static readonly TimeSpan Retention = TimeSpan.FromDays(7);
     public const long DefaultMaxBytesPerDay = 20L * 1024 * 1024;
 
     private readonly string _dir;
+    private readonly string _prefix;
     private readonly IClock _clock;
     private readonly object _gate = new();
     private readonly long _maxBytes;
@@ -27,8 +28,11 @@ public sealed class FileLog : IAppLog, IDisposable
     private long _bytes;
     private bool _capped;
 
-    public FileLog(string logsDir, IClock clock, long maxBytesPerDay = DefaultMaxBytesPerDay)
+    /// <param name="filePrefix">Start of each day's file name, such as "earthwatch3d-"; must not be empty.</param>
+    public FileLog(string logsDir, IClock clock, string filePrefix, long maxBytesPerDay = DefaultMaxBytesPerDay)
     {
+        ArgumentException.ThrowIfNullOrEmpty(filePrefix);
+        _prefix = filePrefix;
         _dir = logsDir;
         _clock = clock;
         _maxBytes = maxBytesPerDay;
@@ -48,7 +52,7 @@ public sealed class FileLog : IAppLog, IDisposable
     private void Prune()
     {
         var cutoff = _clock.UtcNow - Retention;
-        foreach (var f in Directory.EnumerateFiles(_dir, Prefix + "*.log"))
+        foreach (var f in Directory.EnumerateFiles(_dir, _prefix + "*.log"))
         {
             try { if (File.GetLastWriteTimeUtc(f) < cutoff) File.Delete(f); }
             catch (Exception) { }
@@ -64,7 +68,7 @@ public sealed class FileLog : IAppLog, IDisposable
         if (e is not null) sb.Append(" | ").Append(e.ToString());
         // Keep each entry on one line so the file stays greppable.
         var line = sb.ToString().ReplaceLineEndings(" ");
-        var file = Path.Combine(_dir, Prefix + now.ToLocalTime().ToString("yyyyMMdd", CultureInfo.InvariantCulture) + ".log");
+        var file = Path.Combine(_dir, _prefix + now.ToLocalTime().ToString("yyyyMMdd", CultureInfo.InvariantCulture) + ".log");
         lock (_gate)
         {
             if (_disposed) return;
