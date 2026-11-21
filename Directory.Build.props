@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup>
+    <!-- One AstroCore copy per app build: an app sets this to its own external\AstroCore\ before building. -->
+    <AstroCoreRoot Condition="'$(AstroCoreRoot)' == ''">$(MSBuildThisFileDirectory)external\AstroCore\</AstroCoreRoot>
+  </PropertyGroup>
+
+  <!--
+    Windows' 260-character path limit breaks builds when the solution lives in a very deep folder.
+    In that case only, redirect bin/obj to a short folder under %TEMP%. In a normal location
+    (e.g. C:\repos\GlobeCore) the standard bin/obj folders are used.
+  -->
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Length) &gt; 110">
+    <_ShortBuildRoot>$([System.IO.Path]::GetTempPath())GlobeCore.build\</_ShortBuildRoot>
+    <BaseIntermediateOutputPath>$(_ShortBuildRoot)obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(_ShortBuildRoot)bin\$(MSBuildProjectName)\</BaseOutputPath>
+  </PropertyGroup>
+</Project>
