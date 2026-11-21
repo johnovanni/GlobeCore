@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\GlobeCore\GlobeCore.csproj" />
+    <ProjectReference Include="..\..\src\GlobeCore.Wpf\GlobeCore.Wpf.csproj" />
   </ItemGroup>
 
 </Project>
