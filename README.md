@@ -72,6 +72,9 @@ must build GlobeCore against that copy, so there is one AstroCore in the build. 
 </PropertyGroup>
 ```
 
+This works because GlobeCore's own `Directory.Build.props` first imports the nearest `Directory.Build.props` above the
+GlobeCore folder (the app's, when GlobeCore is the app's submodule), so the app's `AstroCoreRoot` is already set.
+
 The app then needs only `git submodule update --init` (not `--recursive`): GlobeCore's nested AstroCore is not used.
 
 ## Credits and licence

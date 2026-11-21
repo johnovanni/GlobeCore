@@ -1,4 +1,14 @@
 <Project>
+  <!--
+    When GlobeCore is a submodule of an app (app\external\GlobeCore), the app's Directory.Build.props is imported
+    first, so its AstroCoreRoot (the app's own external\AstroCore\) wins. Standalone, nothing is found and nothing is
+    imported.
+  -->
+  <PropertyGroup>
+    <_GlobeCoreParentProps>$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)..'))</_GlobeCoreParentProps>
+  </PropertyGroup>
+  <Import Project="$(_GlobeCoreParentProps)" Condition="'$(_GlobeCoreParentProps)' != ''" />
+
   <PropertyGroup>
     <!-- One AstroCore copy per app build: an app sets this to its own external\AstroCore\ before building. -->
     <AstroCoreRoot Condition="'$(AstroCoreRoot)' == ''">$(MSBuildThisFileDirectory)external\AstroCore\</AstroCoreRoot>
