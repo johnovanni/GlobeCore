@@ -10,7 +10,9 @@ public sealed record LegendItem(string Label, Color Color, string? Glyph);
 /// <summary>
 /// A layer of the globe, owned by a <see cref="LayerHost"/>. <see cref="ZOrder"/> fixes the order layers of one kind are
 /// drawn and picked in (higher is drawn later, and wins a pick). Hiding a layer (<see cref="IsVisible"/>) leaves it out of
-/// the image, the scene, the overlay and picking. Used on the UI thread only.
+/// the image, the scene, the overlay and picking. Used on the UI thread, except that a layer may call its
+/// <c>Invalidate</c> (or <c>InvalidateNow</c>) and set <see cref="IsVisible"/> from any thread: the host takes the change to
+/// the UI thread (PropertyChanged itself is raised on the thread that set the property).
 /// </summary>
 public abstract class GlobeLayer : INotifyPropertyChanged
 {

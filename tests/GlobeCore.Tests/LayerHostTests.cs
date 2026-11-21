@@ -41,6 +41,7 @@ public class LayerHostTests
         public override IImageLayer? Current => Image;
         public List<(IImageLayer? Used, bool Composed)> Displayed { get; } = [];
         public void Touch() => Invalidate();
+        public void TouchNow() => InvalidateNow();
         protected internal override void OnComposeDisplayed(IImageLayer? used, bool composed) => Displayed.Add((used, composed));
     }
 
@@ -48,6 +49,7 @@ public class LayerHostTests
     {
         public int Updates { get; private set; }
         public override void Update(SceneContext ctx) => Updates++;
+        public void Touch() => Invalidate();
         public PickResult? HitTest(Point screen, Projector projector, bool hover) => new(Id, this, "tip " + Id);
     }
 
@@ -63,6 +65,7 @@ public class LayerHostTests
         var (host, _, _) = NewHost();
         var layer = new TestImageLayer("lines", null);
         host.Add(layer);
+        await host.RecomposeNowAsync();   // start
         int composes = 0;
         host.Composed += (_, _) => composes++;
 
@@ -71,7 +74,7 @@ public class LayerHostTests
 
         await StaAsync.WaitUntil(() => composes >= 2);
         await Task.Delay(600);   // well past the window: nothing more is owed
-        Assert.Equal(2, composes);   // the first, then one for the three invalidations
+        Assert.Equal(2, composes);   // the request, then one for the three invalidations
         Assert.True(host.IsComposeIdle);
         host.Dispose();
     });
@@ -163,9 +166,8 @@ public class LayerHostTests
         int first = 0;
         host.FirstComposeDisplayed += (_, _) => first++;
 
-        host.DisplayTimeUtc = t;   // never composed, so due: composes
-        await host.WhenFirstComposeDisplayed;
-        await StaAsync.WaitUntil(() => host.IsComposeIdle);
+        host.DisplayTimeUtc = t;
+        await host.RecomposeNowAsync();
 
         var expected = Bgra32Image.Create(16, 8);
         new GlobeImageComposer(baseImage).ComposeInto(
@@ -193,7 +195,8 @@ public class LayerHostTests
         var t = new DateTime(2026, 11, 21, 12, 0, 0, DateTimeKind.Utc);
 
         host.DisplayTimeUtc = t;
-        await StaAsync.WaitUntil(() => composes == 1 && host.IsComposeIdle);
+        await host.RecomposeNowAsync();
+        Assert.Equal(1, composes);
         host.DisplayTimeUtc = t.AddSeconds(59);   // not due
         await Task.Delay(400);
         Assert.Equal(1, composes);
@@ -232,6 +235,125 @@ public class LayerHostTests
         Assert.DoesNotContain(b.Root, viewport.Children);
         b.IsVisible = true;
         Assert.Equal(g + 1, viewport.Children.IndexOf(b.Root));
+        host.Dispose();
+    });
+
+    [Fact]
+    public void StartUpSequenceGivesExactlyOneCompose() => StaAsync.Run(async () =>
+    {
+        var (host, _, _) = NewHost();
+        int composes = 0, first = 0;
+        host.Composed += (_, _) => composes++;
+        host.FirstComposeDisplayed += (_, _) => first++;
+        var t = new DateTime(2026, 11, 21, 12, 0, 0, DateTimeKind.Utc);
+
+        host.DisplayTimeUtc = t;   // before any layer: only recorded
+        var layer = new TestImageLayer("lines", new BitmapBlendLayer(Bgra32Image.Create(8, 4), ImagePass.AboveNight, 10));
+        host.Add(layer);
+        host.IlluminationAt = utc => new IlluminationState(new GeoPosition(0, 0), 1.0, true);
+        layer.Touch(); layer.TouchNow(); layer.IsVisible = false; layer.IsVisible = true;
+        host.RequestRecompose(); host.RecomposeIfStale();
+        host.DisplayTimeUtc = t.AddHours(1);
+        await Task.Delay(400);
+        Assert.Equal(0, composes);   // nothing composes before start
+
+        await host.RecomposeNowAsync();
+        await Task.Delay(600);   // past the throttle window: no trailing compose owed
+        Assert.Equal(1, composes);
+        Assert.Equal(1, first);
+        Assert.Equal(t.AddHours(1), host.ComposedUtc);
+        Assert.Single(layer.Displayed);
+        Assert.True(host.IsComposeIdle);
+        host.Dispose();
+    });
+
+    [Fact]
+    public void ImageLayerAddedAfterStartShowsAfterTheThrottle() => StaAsync.Run(async () =>
+    {
+        var baseImage = Pattern(8, 4);
+        var (host, _, _) = NewHost(baseImage);
+        await host.RecomposeNowAsync();
+        int composes = 0;
+        host.Composed += (_, _) => composes++;
+        var red = Bgra32Image.Create(8, 4);
+        for (int i = 0; i < red.Pixels.Length; i += 4) { red.Pixels[i + 2] = 255; red.Pixels[i + 3] = 255; }
+        var layer = new TestImageLayer("late", new BitmapBlendLayer(red, ImagePass.AboveNight, 10));
+
+        host.Add(layer);
+        await StaAsync.WaitUntil(() => composes == 1 && host.IsComposeIdle);
+        var expected = Bgra32Image.Create(8, 4);
+        new GlobeImageComposer(baseImage).ComposeInto([layer.Image!], null, expected);
+        Assert.Equal(expected.Pixels, host.ComposedImage.Pixels);
+
+        layer.IsVisible = false;   // hiding it composes it away (a trailing compose inside the window)
+        await StaAsync.WaitUntil(() => composes == 2 && host.IsComposeIdle);
+        new GlobeImageComposer(baseImage).ComposeInto([], null, expected);
+        Assert.Equal(expected.Pixels, host.ComposedImage.Pixels);
+        host.Dispose();
+    });
+
+    [Fact]
+    public void ImageLayerInvalidatedFromAnotherThreadComposesOnceOnTheUiThread() => StaAsync.Run(async () =>
+    {
+        var (host, _, _) = NewHost();
+        var layer = new TestImageLayer("clouds", null);
+        host.Add(layer);
+        await host.RecomposeNowAsync();
+        int composes = 0;
+        var threads = new List<int>();
+        host.Composed += (_, _) => { composes++; threads.Add(Environment.CurrentManagedThreadId); };
+        int ui = Environment.CurrentManagedThreadId;
+
+        // The UI thread is blocked while the worker invalidates, so the three calls coalesce into one dispatch.
+        Task.Run(() => { layer.Touch(); layer.Touch(); layer.Touch(); }).Wait();
+        await StaAsync.WaitUntil(() => composes == 1 && host.IsComposeIdle);
+        await Task.Delay(400);
+        Assert.Equal(1, composes);
+
+        Task.Run(() => { layer.TouchNow(); layer.TouchNow(); layer.TouchNow(); }).Wait();
+        await StaAsync.WaitUntil(() => composes == 2 && host.IsComposeIdle);
+        await Task.Delay(400);
+        Assert.Equal(2, composes);
+        Assert.All(threads, id => Assert.Equal(ui, id));
+
+        Task.Run(() => layer.IsVisible = false).Wait();   // a visibility change from another thread is taken across too
+        await StaAsync.WaitUntil(() => composes == 3 && host.IsComposeIdle);
+        host.Dispose();
+    });
+
+    [Fact]
+    public void SceneLayerInvalidatedFromAnotherThreadUpdatesOnce() => StaAsync.Run(async () =>
+    {
+        var (host, _, _) = NewHost();
+        var layer = new TestPickLayer("events", 100);
+        host.Add(layer);
+        await host.RecomposeNowAsync();
+        host.RenderFrame();
+        host.RenderFrame();
+        int before = layer.Updates;
+        Assert.False(host.IsSceneDirty);
+
+        Task.Run(() => { layer.Touch(); layer.Touch(); layer.Touch(); }).Wait();
+        await StaAsync.WaitUntil(() => host.IsSceneDirty || layer.Updates > before);
+        host.RenderFrame();
+        host.RenderFrame();
+        Assert.Equal(before + 1, layer.Updates);
+        host.Dispose();
+    });
+
+    [Fact]
+    public void HostMembersRejectOtherThreads() => Sta.Run(() =>
+    {
+        var (host, _, _) = NewHost();
+        static void Off(Action a) => Assert.Throws<InvalidOperationException>(() =>
+        {
+            try { Task.Run(a).Wait(); }
+            catch (AggregateException e) { throw e.InnerException!; }
+        });
+        Off(host.RequestRecompose);
+        Off(() => host.RecomposeNowAsync());
+        Off(host.RecomposeIfStale);
+        Off(() => host.DisplayTimeUtc = DateTime.UtcNow);
         host.Dispose();
     });
 

@@ -29,7 +29,21 @@ namespace GlobeCore.Wpf.Layers;
 /// <see cref="RecomposeThrottle"/> for requests (with a trailing compose, so the globe ends on the last state).
 /// Scene layers' visuals sit in the viewport after the globe; scene and overlay layers are redrawn on frames when the
 /// camera, the viewport size or a layer has changed. Hover shows the top pickable layer's tooltip; a click raises
-/// <see cref="Selected"/>. UI thread only. Dispose when the window closes.
+/// <see cref="Selected"/>. Dispose when the window closes.
+/// <para>
+/// Start-up: create the host once the base image is loaded, <see cref="Add"/> the layers, set
+/// <see cref="IlluminationAt"/> (or <see cref="Illumination"/>) and <see cref="DisplayTimeUtc"/>, then call
+/// <see cref="RecomposeNowAsync"/> once: that is the first compose. Until then, setting the time, requests and layer
+/// invalidations are only recorded (as before load in EarthWatch3D's SceneController), so the first globe shows every layer
+/// and <see cref="FirstComposeDisplayed"/> is raised once, for it. After that, adding a visible image layer or showing or
+/// hiding one requests a recompose.
+/// </para>
+/// <para>
+/// Threads: the host's members are for the UI thread (the viewport's dispatcher) and check it. Only the layers'
+/// <c>Invalidate</c> and <c>InvalidateNow</c>, and a layer's <see cref="GlobeLayer.IsVisible"/> change, may come from any
+/// thread: from another thread they are coalesced and handled on the UI thread (an Interlocked flag and a
+/// Dispatcher.BeginInvoke, as SceneController did for feed events).
+/// </para>
 /// </summary>
 public sealed class LayerHost : IDisposable
 {
@@ -60,6 +74,11 @@ public sealed class LayerHost : IDisposable
     private readonly TaskCompletionSource _firstCompose = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource? _loopDone;
     private bool _composing, _recomposePending, _closed;
+    // False until the first RecomposeNowAsync: before it, requests are only recorded.
+    private bool _started;
+    // Per kind, 1 while an invalidation from another thread is waiting to reach the UI thread, so they coalesce.
+    private const int SceneUpdateFlag = 0, RecomposeRequestFlag = 1, RecomposeNowFlag = 2;
+    private readonly int[] _crossThreadPending = new int[3];
     // Something the image shows changed since the last compose started.
     private bool _settingsDirty;
     private DateTime _displayTimeUtc;
@@ -132,15 +151,17 @@ public sealed class LayerHost : IDisposable
     /// <summary>
     /// The time the globe shows. Setting it composes again (throttled) once the time composed last is
     /// <see cref="RecomposeInterval"/> or more away, or is later than this one; nothing while the window is minimized
-    /// (see <see cref="RecomposeIfStale"/>). It does not redraw scene or overlay layers: they invalidate themselves.
+    /// (see <see cref="RecomposeIfStale"/>) or before the first <see cref="RecomposeNowAsync"/>. It does not redraw scene
+    /// or overlay layers: they invalidate themselves. UI thread only.
     /// </summary>
     public DateTime DisplayTimeUtc
     {
         get => _displayTimeUtc;
         set
         {
+            _viewport.Dispatcher.VerifyAccess();
             _displayTimeUtc = value;
-            if (_closed || IsMinimized) return;   // composed on restore instead
+            if (_closed || !_started || IsMinimized) return;   // before start the first compose reads it; minimized: on restore
             if (_schedule.IsDue(value)) RequestThrottled();
         }
     }
@@ -181,13 +202,18 @@ public sealed class LayerHost : IDisposable
     /// <summary>The composed texture (tests).</summary>
     internal Bgra32Image ComposedImage => _composed;
 
+    /// <summary>The scene and overlay layers will be redrawn on the next frame (tests).</summary>
+    internal bool IsSceneDirty => _sceneDirty;
+
     private bool IsMinimized => Window.GetWindow(_viewport)?.WindowState == WindowState.Minimized;
 
     // ---------------------------------------------------------------- layers
 
+    /// <summary>Adds a layer (UI thread only). Once started, adding a visible image layer requests a recompose.</summary>
     public void Add(GlobeLayer layer)
     {
         ArgumentNullException.ThrowIfNull(layer);
+        _viewport.Dispatcher.VerifyAccess();
         ObjectDisposedException.ThrowIf(_closed, this);
         if (_layers.Contains(layer)) throw new ArgumentException($"Layer {layer.Id} is already added.", nameof(layer));
         if (_layers.Any(l => l.Id == layer.Id)) throw new ArgumentException($"A layer with id {layer.Id} is already added.", nameof(layer));
@@ -196,18 +222,30 @@ public sealed class LayerHost : IDisposable
         layer.Invalidated += OnLayerInvalidated;
         if (layer is SceneLayer scene && scene.IsVisible) AttachRoot(scene);
         _sceneDirty = true;
+        if (layer is ImageLayer && layer.IsVisible) RequestRecompose();   // only recorded before start
     }
 
     private void OnLayerPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (_closed || e.PropertyName != nameof(GlobeLayer.IsVisible) || sender is not GlobeLayer layer) return;
+        if (!_viewport.Dispatcher.CheckAccess())
+        {
+            _viewport.Dispatcher.BeginInvoke(() => OnLayerVisibilityChanged(layer));
+            return;
+        }
+        OnLayerVisibilityChanged(layer);
+    }
+
+    private void OnLayerVisibilityChanged(GlobeLayer layer)
+    {
+        if (_closed) return;
         switch (layer)
         {
             case ImageLayer:
                 RequestRecompose();
                 break;
             case SceneLayer scene:
-                if (scene.IsVisible) AttachRoot(scene);
+                if (scene.IsVisible) AttachRoot(scene);   // the flag is read now, so a late hop applies the latest value
                 else _viewport.Children.Remove(scene.Root);
                 _sceneDirty = true;
                 break;
@@ -218,13 +256,30 @@ public sealed class LayerHost : IDisposable
         }
     }
 
+    // May be called on any thread. On the UI thread it acts at once; from another thread only a flag crosses, and the
+    // calls coalesce into one Dispatcher.BeginInvoke per kind (as SceneController did for store and flash changes).
     private void OnLayerInvalidated(GlobeLayer layer, bool immediate)
     {
         if (_closed) return;
-        if (layer is not ImageLayer) { _sceneDirty = true; return; }
-        if (!immediate) { RequestRecompose(); return; }
-        _settingsDirty = true;
-        Recompose();
+        if (layer is not ImageLayer) Marshal(SceneUpdateFlag, () => _sceneDirty = true);
+        else if (!immediate) Marshal(RecomposeRequestFlag, RequestRecompose);
+        else Marshal(RecomposeNowFlag, () =>
+        {
+            _settingsDirty = true;
+            Recompose();   // a no-op before start: the first compose includes it
+        });
+    }
+
+    private void Marshal(int flag, Action action)
+    {
+        var dispatcher = _viewport.Dispatcher;
+        if (dispatcher.CheckAccess()) { action(); return; }
+        if (Interlocked.Exchange(ref _crossThreadPending[flag], 1) == 1) return;
+        dispatcher.BeginInvoke(() =>
+        {
+            Volatile.Write(ref _crossThreadPending[flag], 0);
+            if (!_closed) action();
+        });
     }
 
     /// <summary>Puts the layer's root in the viewport after the globe and after the roots of the layers before it.</summary>
@@ -245,39 +300,55 @@ public sealed class LayerHost : IDisposable
     /// <summary>
     /// Something the globe image shows has changed (a display setting, a layer): composes again, at most every
     /// <see cref="RecomposeThrottle"/>, with a trailing compose so the globe ends on the final state. While the window
-    /// is minimized it is only noted, and composed by <see cref="RecomposeIfStale"/> on restore.
+    /// is minimized it is only noted, and composed by <see cref="RecomposeIfStale"/> on restore; before the first
+    /// <see cref="RecomposeNowAsync"/> it is only noted too (that compose includes it). UI thread only.
     /// </summary>
     public void RequestRecompose()
     {
+        _viewport.Dispatcher.VerifyAccess();
         if (_closed) return;
         _settingsDirty = true;
-        if (IsMinimized) return;   // composed on restore instead
+        if (!_started || IsMinimized) return;   // composed by the first compose, or on restore
         RequestThrottled();   // throttled: a slider changes a setting many times a second
     }
 
     /// <summary>
     /// Composes now, not throttled (or, if a compose is running, once more right after it). Completes when the last
-    /// compose of the run is on the globe.
+    /// compose of the run is on the globe. The first call starts the host (see the class remarks). UI thread only.
     /// </summary>
     public Task RecomposeNowAsync()
     {
+        _viewport.Dispatcher.VerifyAccess();
         if (_closed) return Task.CompletedTask;
+        _started = true;
         if (_composing) { _recomposePending = true; return _loopDone!.Task; }
         _ = ComposeLoopAsync();
         return _loopDone!.Task;
     }
 
-    /// <summary>Composes now if a change is waiting or the display time has moved on (for example when the window is restored).</summary>
+    /// <summary>
+    /// Composes now if a change is waiting or the display time has moved on (for example when the window is restored).
+    /// Nothing before the first <see cref="RecomposeNowAsync"/>. UI thread only.
+    /// </summary>
     public void RecomposeIfStale()
     {
-        if (_closed) return;
+        _viewport.Dispatcher.VerifyAccess();
+        if (_closed || !_started) return;
         if (_settingsDirty || _schedule.IsDue(_displayTimeUtc)) Recompose();
     }
 
-    /// <summary>Redraws the scene and overlay layers on the next frame (for example after the overlay's free area changed).</summary>
-    public void RequestSceneUpdate() => _sceneDirty = true;
+    /// <summary>Redraws the scene and overlay layers on the next frame (for example after the overlay's free area changed). UI thread only.</summary>
+    public void RequestSceneUpdate()
+    {
+        _viewport.Dispatcher.VerifyAccess();
+        _sceneDirty = true;
+    }
 
-    private void Recompose() => _ = RecomposeNowAsync();
+    // Before start (no load yet, in SceneController's terms) the first RecomposeNowAsync composes instead.
+    private void Recompose()
+    {
+        if (_started) _ = RecomposeNowAsync();
+    }
 
     private async Task ComposeLoopAsync()
     {
@@ -394,7 +465,10 @@ public sealed class LayerHost : IDisposable
     private void OnCameraChanged(object? sender, RoutedEventArgs e) => _sceneDirty = true;
     private void OnViewportSizeChanged(object sender, SizeChangedEventArgs e) => _sceneDirty = true;
 
-    private void OnRendering(object? sender, EventArgs e)
+    private void OnRendering(object? sender, EventArgs e) => RenderFrame();
+
+    /// <summary>One frame of the scene and overlay layers (CompositionTarget.Rendering; tests call it directly).</summary>
+    internal void RenderFrame()
     {
         if (_closed) return;
         if (IsMinimized)
@@ -431,6 +505,7 @@ public sealed class LayerHost : IDisposable
     /// <summary>What is under <paramref name="screen"/> (viewport coordinates): the first hit among visible pickable layers, highest z-order first.</summary>
     public PickResult? Pick(Point screen, bool hover)
     {
+        _viewport.Dispatcher.VerifyAccess();
         if (_viewport.Camera is not PerspectiveCamera camera) return null;
         var projector = new Projector(camera, _viewport.ActualWidth, _viewport.ActualHeight);
         for (int i = _layers.Count - 1; i >= 0; i--)
@@ -510,6 +585,7 @@ public sealed class LayerHost : IDisposable
 
     public void Dispose()
     {
+        _viewport.Dispatcher.VerifyAccess();
         if (_closed) return;
         _closed = true;
         CompositionTarget.Rendering -= OnRendering;
