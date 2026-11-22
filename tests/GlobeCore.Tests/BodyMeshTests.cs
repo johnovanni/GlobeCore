@@ -1,7 +1,9 @@
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
+using AstroCore.Astronomy;
 using AstroCore.Earth;
+using GlobeCore.Bodies;
 using GlobeCore.Wpf.Viewport;
 
 namespace GlobeCore.Tests;
@@ -81,6 +83,42 @@ public class BodyMeshTests
             double du = (m.TextureCoordinates[i].X - (g.LongitudeDeg + 180) / 360) % 1;
             Assert.True(Math.Abs(du) < 1e-6 || Math.Abs(Math.Abs(du) - 1) < 1e-6);
         }
+    }
+
+    /// <summary>
+    /// Final review F1: texture row v is planetocentric latitude 90 − 180·v, so each vertex must lie on that latitude's
+    /// radial line (what picking and markers use, through GeoPosition.FromVector), not at the parametric latitude.
+    /// </summary>
+    [Theory] [InlineData(0.902)] [InlineData(0.99411)] [InlineData(0.5)]
+    public void FlattenedVerticesAreAtTheirRowsPlanetocentricLatitude(double ratio)
+    {
+        const int lonSeg = 36, latSeg = 18;
+        var m = BodyMesh.Create(ratio, lonSeg, latSeg);
+        for (int i = 0; i <= latSeg; i++)
+            for (int j = 0; j <= lonSeg; j++)
+            {
+                var p = m.Positions[i * (lonSeg + 1) + j];
+                var g = GeoPosition.FromVector(new Vector3d(p.X, p.Y, p.Z));
+                Assert.Equal(90.0 - 180.0 * i / latSeg, g.LatitudeDeg, 9);
+                Assert.Equal(1, Math.Sqrt(p.X * p.X + p.Y * p.Y + p.Z * p.Z / (ratio * ratio)), 9);   // on the ellipsoid
+                if (i == 0 || i == latSeg) continue;   // the poles have no longitude
+                double dLon = ((g.LongitudeDeg - (360.0 * j / lonSeg - 180.0) + 540) % 360) - 180;
+                Assert.True(Math.Abs(dLon) < 1e-9, $"row {i} col {j}: lon {g.LongitudeDeg}");
+            }
+    }
+
+    [Theory] [InlineData(1.0)] [InlineData(0.902)]
+    public void VerticesAreTheEllipsoidModelPoints(double ratio)
+    {
+        const int lonSeg = 36, latSeg = 18;
+        var m = BodyMesh.Create(ratio, lonSeg, latSeg);
+        for (int i = 0; i <= latSeg; i++)
+            for (int j = 0; j <= lonSeg; j++)
+            {
+                double v = (double)i / latSeg, u = (double)j / lonSeg;
+                var e = Ellipsoid.ModelPoint(90 - 180 * v, 360 * u - 180, ratio);
+                Assert.Equal(new Point3D(e.X, e.Y, e.Z), m.Positions[i * (lonSeg + 1) + j]);
+            }
     }
 
     [Theory] [InlineData(0.0)] [InlineData(-1.0)] [InlineData(1.5)] [InlineData(double.NaN)]

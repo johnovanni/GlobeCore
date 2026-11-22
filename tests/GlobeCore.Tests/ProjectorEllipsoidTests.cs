@@ -95,4 +95,13 @@ public class ProjectorEllipsoidTests
         Assert.True(p.TryProject(h2, out var back));
         Assert.Equal(430, back.X, 6); Assert.Equal(270, back.Y, 6);
     }
+    // Final review minor 12: the polar ratio must be positive and finite.
+    [Theory] [InlineData(0.0)] [InlineData(-0.902)] [InlineData(double.NaN)] [InlineData(double.PositiveInfinity)]
+    public void RejectsInvalidPolarRatio(double ratio)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => Projector.RayHitsEllipsoid(new Point3D(0, 0, 5), new Vector3D(0, 0, -1), ratio, out _));
+        var cam = new PerspectiveCamera(new Point3D(0, 0, 5), new Vector3D(0, 0, -5), new Vector3D(0, 1, 0), 60);
+        var p = new Projector(cam, 800, 600);
+        Assert.Throws<ArgumentOutOfRangeException>(() => p.TryHitBody(new System.Windows.Point(400, 300), ratio, out _));
+    }
 }

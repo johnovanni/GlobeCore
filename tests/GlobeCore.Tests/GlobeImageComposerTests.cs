@@ -16,6 +16,25 @@ public class GlobeImageComposerTests
     public void NightFactorFollowsSmoothstep(double h, double expected) =>
         Assert.Equal(expected, GlobeImageComposer.NightFactor(h, 0.85), 6);
 
+    // Final review F2: the twilight is part of the light, not fixed at -12°.
+    [Theory]
+    [InlineData(-3, -6, 0.425)] [InlineData(-6, -6, 0.85)] [InlineData(-8, -6, 0.85)] [InlineData(-6, -12, 0.425)]
+    public void NightFactorUsesTheTwilight(double h, double twilight, double expected) =>
+        Assert.Equal(expected, GlobeImageComposer.NightFactor(h, 0.85, twilight), 6);
+
+    [Fact]
+    public void ShorterTwilightDarkensFullyBySixDegrees()
+    {   // sub-solar (0,0), 360x180: pixel (276, 89) is at lat 0.5, lon 96.5, Sun altitude ≈ -6.49°.
+        var composer = new GlobeImageComposer(Solid(360, 180, 255));
+        var six = Bgra32Image.Create(360, 180);
+        var twelve = Bgra32Image.Create(360, 180);
+        composer.ComposeInto([], new IlluminationState(new(0, 0), 0.85, false, -6), six);
+        composer.ComposeInto([], new IlluminationState(new(0, 0), 0.85, false), twelve);
+        Assert.Equal((108, 116, 147), (R(six, 276, 89), G(six, 276, 89), B(six, 276, 89)));   // full night, as at -12° and below
+        Assert.True(R(twelve, 276, 89) > 108);                                                  // -12°: still in twilight
+        Assert.Equal(R(six, 0, 89), R(twelve, 0, 89));                                          // deep night: the same
+    }
+
     [Fact]
     public void DaySideUnchangedNightSideDarkenedWithBlueTint()
     {   // 360x180: pixel (180, 90) is centred at lat -0.5, lon 0.5; pixel (0, 89) at lat 0.5, lon -179.5 (antipode)

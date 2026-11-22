@@ -53,7 +53,8 @@ public readonly struct Projector
     public bool TryHitUnitSphere(Point screen, out Point3D hit) => TryHitBody(screen, 1.0, out hit);
 
     /// <summary>
-    /// As <see cref="TryHitUnitSphere"/>, for a body flattened along Z by <paramref name="polarRatio"/> (polar / equatorial radius).
+    /// As <see cref="TryHitUnitSphere"/>, for a body flattened along Z by <paramref name="polarRatio"/> (polar / equatorial
+    /// radius; positive and finite, else <see cref="ArgumentOutOfRangeException"/>).
     /// </summary>
     public bool TryHitBody(Point screen, double polarRatio, out Point3D hit)
     {
@@ -68,9 +69,15 @@ public readonly struct Projector
     /// <summary>
     /// The nearest point ahead of <paramref name="origin"/> along <paramref name="direction"/> on the ellipsoid
     /// x² + y² + (z / polarRatio)² = 1. Scales z by 1 / polarRatio, intersects the unit sphere, and scales back.
+    /// The planetocentric latitude and longitude of the hit are <c>GeoPosition.FromVector(hit)</c>
+    /// (<see cref="GlobeCore.Bodies.Ellipsoid.SurfacePointOf"/>), the inverse of the mesh's
+    /// <see cref="GlobeCore.Bodies.Ellipsoid.ModelPoint(double, double, double)"/>.
     /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="polarRatio"/> is not positive and finite.</exception>
     public static bool RayHitsEllipsoid(Point3D origin, Vector3D direction, double polarRatio, out Point3D hit)
     {
+        if (!(double.IsFinite(polarRatio) && polarRatio > 0))
+            throw new ArgumentOutOfRangeException(nameof(polarRatio), polarRatio, "The polar ratio must be positive and finite.");
         hit = default;
         double k = 1.0 / polarRatio;
         var o = new Vector3D(origin.X, origin.Y, origin.Z * k);

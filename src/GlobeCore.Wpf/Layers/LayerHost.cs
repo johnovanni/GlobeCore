@@ -144,7 +144,9 @@ public sealed class LayerHost : IDisposable
     /// <summary>
     /// If set, called on the UI thread at the start of every compose with the display time it composes; the result
     /// becomes <see cref="Illumination"/>. So the light always matches the time composed (sub-solar point and settings
-    /// read then, as one value).
+    /// read then, as one value). <see cref="Body.IlluminationAt"/> gives the body's own light (its sub-solar point and the
+    /// twilight of its <see cref="SunLit"/>): <c>host.IlluminationAt = utc => host.Body.IlluminationAt(utc, 0.85, true)</c>.
+    /// Whatever the light says, a <see cref="SelfLuminous"/> body is never night-shaded.
     /// </summary>
     public Func<DateTime, IlluminationState?>? IlluminationAt { get; set; }
 

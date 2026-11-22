@@ -55,10 +55,17 @@ public class EarthAssetsTests
         return new Bgra32Image(w, h, pixels);
     }
 
+    /// <summary>The Blue Marble as an app loads it (the Earth pack has no UI, so the WPF side decodes it).</summary>
+    private static Bgra32Image LoadBlueMarble(int width)
+    {
+        using var s = EarthAssets.Open(EarthAssets.BlueMarbleFile);
+        return GlobeCore.Wpf.Rendering.ImageConversions.DecodeToBgra32(s, width);
+    }
+
     [Fact]
     public void BlueMarbleDownscaleMatchesOld()
     {
-        var loaded = EarthAssets.LoadBlueMarble(4096);
+        var loaded = LoadBlueMarble(4096);
         using var s = typeof(EarthAssets).Assembly.GetManifestResourceStream("GlobeCore.Earth.Assets.bluemarble-8192.jpg")!;
         var old = OldDecode(s, 4096);
         Assert.Equal((4096, 2048), (loaded.Width, loaded.Height));

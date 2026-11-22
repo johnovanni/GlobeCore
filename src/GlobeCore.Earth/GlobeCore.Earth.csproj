@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- Windows and WPF: the Blue Marble is decoded (and scaled while decoding) with WPF imaging. -->
-    <TargetFramework>net10.0-windows</TargetFramework>
-    <UseWPF>true</UseWPF>
+    <!-- No UI, so no-UI projects (an app's .Core) can use the Earth body and assets. Decoding the Blue Marble needs WPF
+         imaging, so the WPF side does it: ImageConversions.DecodeToBgra32(EarthAssets.Open(EarthAssets.BlueMarbleFile), width). -->
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>GlobeCore.Earth</RootNamespace>
@@ -16,7 +16,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\GlobeCore\GlobeCore.csproj" />
-    <ProjectReference Include="..\GlobeCore.Wpf\GlobeCore.Wpf.csproj" />
   </ItemGroup>
 
   <ItemGroup>

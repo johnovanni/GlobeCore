@@ -15,10 +15,12 @@ a git submodule. Astronomy (orbits, body rotation, sub-solar points) comes from 
 - **`GlobeCore.Wpf`** (`net10.0-windows`, WPF, HelixToolkit.Wpf): the ellipsoid mesh (`BodyMesh`), camera rules and
   animation, picking (`Projector`, ray/ellipsoid hits), rasterizers, the layer classes and `LayerHost`, shared styles,
   and diagnostics (`CrashHandler`, `SnapshotRenderer`, which saves a window as a PNG through `RenderTargetBitmap`).
-- **`GlobeCore.Earth`** (`net10.0-windows`): the Earth pack. `EarthBody` (a sphere of radius 6371 km),
-  `EarthAssets` (the embedded NASA Blue Marble, Natural Earth coastlines and borders, and PB2002 plate boundaries,
-  resource names `GlobeCore.Earth.Assets.<file>`), `NaturalEarthLines`, `PlateBoundaries`, and the daily cloud layer
-  (`GlobeCore.Earth.Clouds`: `GibsCloudsFeed` from NASA GIBS, `CloudLayer`).
+- **`GlobeCore.Earth`** (`net10.0`, no UI, so an app's no-UI project can use it too): the Earth pack. `EarthBody` (a
+  sphere of radius 6371 km), `EarthAssets` (the embedded NASA Blue Marble, Natural Earth coastlines and borders, and
+  PB2002 plate boundaries, resource names `GlobeCore.Earth.Assets.<file>`), `NaturalEarthLines`, `PlateBoundaries`,
+  and the daily cloud layer (`GlobeCore.Earth.Clouds`: `GibsCloudsFeed` from NASA GIBS, which takes its image decoder
+  as a function, and `CloudLayer`). The WPF side decodes the Blue Marble:
+  `ImageConversions.DecodeToBgra32(EarthAssets.Open(EarthAssets.BlueMarbleFile), width)` scales it while decoding.
 
 Tests are in `tests/GlobeCore.Tests` (`dotnet test`).
 
@@ -36,7 +38,20 @@ A `LayerHost` owns the globe in a `HelixViewport3D` and the layers on it:
   host shows its tooltip on hover and raises `Selected` on a click.
 
 The app sets `DisplayTimeUtc` (the globe composes again once it has moved on by a minute) and `Illumination`, or
-`IlluminationAt` to work the light out at each compose.
+`IlluminationAt` to work the light out at each compose (`body.IlluminationAt(utc, nightStrength, drawTerminator)` gives
+the body's sub-solar point and the twilight of its `SunLit`).
+
+An `IImageLayer`'s `BlendRow` is called for different rows at once (the composer runs a `Parallel.For` over the rows),
+so it must be thread-safe.
+
+Latitudes are planetocentric everywhere: the mesh (`BodyMesh`) puts each texture row on the radial line of its
+latitude (`Ellipsoid.ModelPoint`), and picking turns a hit back with `GeoPosition.FromVector`
+(`Ellipsoid.SurfacePointOf`). Longitudes are always stored east-positive in (−180, 180]; a body's
+`LongitudeConvention` only changes how they are shown (`GeoFormat.LatLon(point, convention)`; Mars: 0–360°W).
+
+In `PERF_LOG` builds the layer host logs each compose through `GlobeCore.Wpf.Diagnostics.PerfLog`, to
+`%TEMP%\GlobeCore-perf.log` unless the app calls `PerfLog.Configure("<AppName>")` at start-up (then
+`%TEMP%\<AppName>-perf.log`); an app can write its own lines there with `PerfLog.Write`.
 
 ## Adding a body
 
@@ -49,13 +64,18 @@ The app sets `DisplayTimeUtc` (the globe composes again once it has moved on by 
    ```csharp
    var (eq, polar) = BodyConstants.Radii("mars");
    var mars = new Body("mars", "Mars", new Ellipsoid(eq, polar), BodyRotations.Mars,
-       PlanetOrbits.Mars.PositionAt, LongitudeConvention.EastPositive, new SunLit());
+       PlanetOrbits.Mars.PositionAt, LongitudeConvention.EastPositive, new SunLit());   // WestPositive: shown as °W
    ```
+
+   `Body.SubSolarPoint(utc)` is geometric: the Sun and the body are both taken at `utc`, with no light time. That is
+   the body's own day and night at that moment. To show Mars as it looks from the Earth at `utc`, use the light that
+   left it one one-way light time earlier, `mars.SubSolarPoint(utc - lightTime)` (lightTime = Earth–Mars distance / c,
+   3 to 22 minutes). Mars turns about 0.24° a minute, so leaving it out moves the day/night line by up to about 5°.
 
 2. Give it a base texture: an equirectangular `Bgra32Image`, west edge at −180°, north at the top
    (`ImageConversions.DecodeToBgra32` decodes a JPEG or PNG, scaling while it decodes).
 3. Create a `LayerHost(viewport, overlay, body, baseImage, log)`, add its layers, set `IlluminationAt`
-   (for example `utc => new IlluminationState(body.SubSolarPoint(utc), 0.85, true)`), and `await RecomposeNowAsync()`.
+   (for example `utc => body.IlluminationAt(utc, 0.85, true)`), and `await RecomposeNowAsync()`.
 
 A body's data and assets (like `GlobeCore.Earth`) go in a pack project of their own, so apps take only the bodies
 they use.

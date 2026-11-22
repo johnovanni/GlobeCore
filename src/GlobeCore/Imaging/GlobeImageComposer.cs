@@ -2,8 +2,18 @@ using GlobeCore.Bodies;
 
 namespace GlobeCore.Imaging;
 
-/// <summary>What the composer needs to light the globe: where the Sun is overhead, how dark the night is, whether to draw the day/night line.</summary>
-public sealed record IlluminationState(SurfacePoint SubSolarPoint, double NightStrength, bool DrawTerminator);
+/// <summary>
+/// What the composer needs to light the globe: where the Sun is overhead, how dark the night is, whether to draw the
+/// day/night line, and the Sun altitude at which the night is complete (<paramref name="TwilightDeg"/>: below 0°, at
+/// least −90°; −12° by default, as EarthWatch3D always drew it). <see cref="Body.IlluminationAt"/> builds one from a body,
+/// with the twilight of its <see cref="SunLit"/>.
+/// </summary>
+public sealed record IlluminationState(SurfacePoint SubSolarPoint, double NightStrength, bool DrawTerminator, double TwilightDeg = -12.0)
+{
+    public double TwilightDeg { get; } = TwilightDeg is < 0 and >= -90
+        ? TwilightDeg
+        : throw new ArgumentOutOfRangeException(nameof(TwilightDeg), TwilightDeg, "The twilight must be a Sun altitude below 0°, at least −90°.");
+}
 
 /// <summary>Adapter: the fixed layer set EarthWatch3D used before layers became a list.</summary>
 public sealed record GlobeLayers(
@@ -18,15 +28,18 @@ public sealed record GlobeLayers(
 /// <summary>
 /// Composes the globe texture: base, Surface layers (by Order), night shade, day/night line, AboveNight layers (by Order).
 /// The night side is darkened (each channel multiplied toward a blue-tinted dark, so it never gets lighter),
-/// with strength <c>NightStrength × smoothstep(0°, −12°, h)</c> where h is the Sun's altitude.
+/// with strength <c>NightStrength × smoothstep(0°, TwilightDeg, h)</c> where h is the Sun's altitude and TwilightDeg is
+/// the <see cref="IlluminationState"/>'s (−12° by default). h is worked out from each pixel's planetocentric latitude
+/// and longitude, as on a sphere, not from the normal of the body's ellipsoid; on a flattened body that moves the
+/// day/night line a little from where the true horizon puts it (on Mars by up to about 0.34°, near ±45° latitude).
 /// The day/night line is a soft gold line along h = 0, about <see cref="TerminatorHalfWidthPx"/> pixels each side.
 /// With no <see cref="IlluminationState"/> the night shade and line are skipped (a self-luminous body).
 /// Pixel (x, y) is centred at lon = -180 + (x+0.5)*360/W, lat = 90 - (y+0.5)*180/H.
 /// </summary>
 public sealed class GlobeImageComposer(Bgra32Image baseImage)
 {
-    private const double TwilightDeg = -12.0;
-    private static readonly double SinTwilight = Math.Sin(TwilightDeg * Math.PI / 180.0);
+    /// <summary>The twilight when none is given: the night is complete at a Sun altitude of −12°.</summary>
+    public const double DefaultTwilightDeg = -12.0;
     // Full-night channel multipliers: darker in red and green than blue, so night reads as dark blue.
     private const double NightMulB = 0.50, NightMulG = 0.36, NightMulR = 0.32;
     // Day/night line: colour, peak opacity, and half-width in image pixels.
@@ -36,10 +49,13 @@ public sealed class GlobeImageComposer(Bgra32Image baseImage)
 
     private readonly Bgra32Image _base = baseImage ?? throw new ArgumentNullException(nameof(baseImage));
 
-    /// <summary>How strongly a point is darkened: <paramref name="strength"/> × smoothstep(0°, −12°, altitude).</summary>
-    public static double NightFactor(double sunAltitudeDeg, double strength)
+    /// <summary>
+    /// How strongly a point is darkened: <paramref name="strength"/> × smoothstep(0°, <paramref name="twilightDeg"/>,
+    /// altitude); the twilight is −12° unless given.
+    /// </summary>
+    public static double NightFactor(double sunAltitudeDeg, double strength, double twilightDeg = DefaultTwilightDeg)
     {
-        double t = Math.Clamp((sunAltitudeDeg - 0.0) / (TwilightDeg - 0.0), 0.0, 1.0);
+        double t = Math.Clamp((sunAltitudeDeg - 0.0) / (twilightDeg - 0.0), 0.0, 1.0);
         return strength * (t * t * (3.0 - 2.0 * t));
     }
 
@@ -68,6 +84,8 @@ public sealed class GlobeImageComposer(Bgra32Image baseImage)
         var above = layers.Where(l => l.Pass == ImagePass.AboveNight).OrderBy(l => l.Order).ToArray();
 
         double max = Math.Clamp(light?.NightStrength ?? 0.0, 0.0, 1.0);
+        double twilight = light?.TwilightDeg ?? DefaultTwilightDeg;
+        double sinTwilight = Math.Sin(twilight * Math.PI / 180.0);
         double deg = Math.PI / 180.0;
         double sinDec = 0, cosDec = 1, sunLon = 0;
         if (light != null)
@@ -115,7 +133,7 @@ public sealed class GlobeImageComposer(Bgra32Image baseImage)
                     double s = a + b * cosDl[x];
                     if (shade && s < 0.0)
                     {
-                        if (s <= SinTwilight)
+                        if (s <= sinTwilight)
                         {
                             dst[p] = fullB[dst[p]];
                             dst[p + 1] = fullG[dst[p + 1]];
@@ -123,7 +141,7 @@ public sealed class GlobeImageComposer(Bgra32Image baseImage)
                         }
                         else
                         {
-                            double f = NightFactor(Math.Asin(s) / deg, max);
+                            double f = NightFactor(Math.Asin(s) / deg, max, twilight);
                             dst[p] = Darken(dst[p], NightMulB, f);
                             dst[p + 1] = Darken(dst[p + 1], NightMulG, f);
                             dst[p + 2] = Darken(dst[p + 2], NightMulR, f);
