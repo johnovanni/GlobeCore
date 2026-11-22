@@ -101,4 +101,4 @@ The app then needs only `git submodule update --init` (not `--recursive`): Globe
 ## Credits and licence
 
 The Earth assets and their licences are listed in `src/GlobeCore.Earth/Assets/README.md` and `THIRD-PARTY-NOTICES.txt`
-(the plate boundaries need their credit shown). GlobeCore has no licence file yet: the owner will choose one.
+(the plate boundaries need their credit shown). GlobeCore's own code is under the MIT licence (see `LICENSE`); the assets keep their own terms.
