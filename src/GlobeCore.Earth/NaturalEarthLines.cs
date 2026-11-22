@@ -1,23 +1,34 @@
 using AstroCore.Earth;
 using GlobeCore.Geo;
+using GlobeCore.Regions;
 
 namespace GlobeCore.Earth;
 
 /// <summary>Natural Earth 1:50m lines, read from the embedded GeoJSON (each line a list of points, [lon, lat] read as lat/lon).</summary>
 public static class NaturalEarthLines
 {
+    /// <summary>Coastlines: physical, so bundled only (never updated).</summary>
     public static List<IReadOnlyList<GeoPosition>> Coastlines() => Read(EarthAssets.CoastlineFile);
 
     /// <summary>
-    /// Country borders on land. The line between Crimea and the rest of Ukraine (Perekop isthmus) is left out: Crimea is
-    /// part of Ukraine, as on UN maps (see <see cref="CrimeaFixup"/>).
+    /// Country borders on land from the bundled Natural Earth 5.1.2 set with the TRANSITIONAL built-in rule
+    /// (<see cref="NaturalEarthBoundaries.TransitionalDefaultRules"/>): the line between Crimea and the rest of Ukraine
+    /// (Perekop isthmus) is left out, as Crimea is part of Ukraine on UN maps. This keeps today's callers' results until
+    /// each app supplies its own rules (<see cref="LandBoundaries(Stream)"/>, <see cref="LandBoundaries(BoundarySet)"/>);
+    /// then this default goes.
     /// </summary>
-    public static List<IReadOnlyList<GeoPosition>> LandBoundaries()
+    public static List<IReadOnlyList<GeoPosition>> LandBoundaries() => LandBoundaries(NaturalEarthBoundaries.TransitionalDefaultSet);
+
+    /// <summary>Country borders on land from the bundled set with the app's rules file applied (see <see cref="BoundaryRules.Parse"/>).</summary>
+    /// <exception cref="BoundaryRuleException">The rules are malformed or do not match the bundled files.</exception>
+    public static List<IReadOnlyList<GeoPosition>> LandBoundaries(Stream rulesJson) =>
+        LandBoundaries(NaturalEarthBoundaries.LoadBundled(BoundaryRules.Parse(rulesJson)));
+
+    /// <summary>The boundary lines of a set (e.g. <see cref="CurrentBoundaries.Set"/>), as a new list.</summary>
+    public static List<IReadOnlyList<GeoPosition>> LandBoundaries(BoundarySet set)
     {
-        var lines = Read(EarthAssets.LandBoundariesFile);
-        int dropped = lines.RemoveAll(CrimeaFixup.IsRegionsLine);
-        if (dropped != 1) throw new InvalidDataException($"Crimea fix-up: expected 1 land-boundary line around Crimea, found {dropped}");
-        return lines;
+        ArgumentNullException.ThrowIfNull(set);
+        return set.Lines.Select(l => l.Points).ToList();
     }
 
     private static List<IReadOnlyList<GeoPosition>> Read(string name)

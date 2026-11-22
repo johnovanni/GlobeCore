@@ -11,14 +11,18 @@ a git submodule. Astronomy (orbits, body rotation, sub-solar points) comes from 
   (GeoJSON lines, date-line splitting, distances, formatting, units), image composition (`GlobeImageComposer` over an
   ordered list of `IImageLayer`s: base, Surface layers, night shade and day/night line, AboveNight layers), feeds
   (`IFeed`, `FeedScheduler`, `FeedHttp` with the app's User-Agent, back-off, a daily download meter), stores, settings,
-  storage paths, logging and time.
+  storage paths, logging and time. `GlobeCore.Regions` holds political boundaries for any body: `Region` and
+  `RegionIndex` (point-in-region lookup and name matching), `BoundarySet` (one edition's regions and boundary lines),
+  `BoundaryRules` (an app's adjustments, as data, applied at every load), `BoundaryValidator`, `BoundaryStore`
+  (validated downloads on disk) and `CurrentBoundaries` (the live set, swapped atomically).
 - **`GlobeCore.Wpf`** (`net10.0-windows`, WPF, HelixToolkit.Wpf): the ellipsoid mesh (`BodyMesh`), camera rules and
   animation, picking (`Projector`, ray/ellipsoid hits), rasterizers, the layer classes and `LayerHost`, shared styles,
   and diagnostics (`CrashHandler`, `SnapshotRenderer`, which saves a window as a PNG through `RenderTargetBitmap`).
 - **`GlobeCore.Earth`** (`net10.0`, no UI, so an app's no-UI project can use it too): the Earth pack. `EarthBody` (a
   sphere of radius 6371 km), `EarthAssets` (the embedded NASA Blue Marble, Natural Earth coastlines and borders, and
   PB2002 plate boundaries, resource names `GlobeCore.Earth.Assets.<file>`), `NaturalEarthLines`, `PlateBoundaries`,
-  and the daily cloud layer (`GlobeCore.Earth.Clouds`: `GibsCloudsFeed` from NASA GIBS, which takes its image decoder
+  `NaturalEarthBoundaries` (Natural Earth 5.1.2 boundary sets as `GlobeCore.Regions` data) with `CountryIndex` (its
+  ISO3 facade; the rules file format is in `src/GlobeCore.Earth/Assets/README.md`), and the daily cloud layer (`GlobeCore.Earth.Clouds`: `GibsCloudsFeed` from NASA GIBS, which takes its image decoder
   as a function, and `CloudLayer`). The WPF side decodes the Blue Marble:
   `ImageConversions.DecodeToBgra32(EarthAssets.Open(EarthAssets.BlueMarbleFile), width)` scales it while decoding.
 
@@ -78,7 +82,9 @@ In `PERF_LOG` builds the layer host logs each compose through `GlobeCore.Wpf.Dia
    (for example `utc => body.IlluminationAt(utc, 0.85, true)`), and `await RecomposeNowAsync()`.
 
 A body's data and assets (like `GlobeCore.Earth`) go in a pack project of their own, so apps take only the bodies
-they use.
+they use. For political boundaries, the pack maps its source files to `RawBoundaryData` (regions, lines and the
+subdivisions its rules need), as `NaturalEarthBoundaries` does for Natural Earth; `BoundaryRules`, the validator, the
+store and `CurrentBoundaries` then work unchanged.
 
 ## Using it from an app: `AstroCoreRoot`
 

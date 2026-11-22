@@ -1,6 +1,7 @@
 using AstroCore.Earth;
 using GlobeCore.Earth;
 using GlobeCore.Geo;
+using GlobeCore.Regions;
 
 namespace GlobeCore.Tests;
 
@@ -88,15 +89,47 @@ public class CountryIndexTests
     }
 
     [Fact]
-    public void CrimeaFixupMovesExactlyNaturalEarthsAdmin1Polygons()
+    // The parameterless load applies the transitional built-in copy of the Crimea rule (until the apps supply their own).
+    public void CrimeaRuleMovesExactlyNaturalEarthsAdmin1Polygons()
     {
-        var regions = CrimeaFixup.Get();
-        Assert.Equal(2, regions.Polygons.Count);
+        var admin1 = NaturalEarthBoundaries.ReadBundled().Subdivisions.Where(s => s.Code is "UA-43" or "UA-40").ToList();
+        Assert.Equal(2, admin1.Count);
         var ukr = Index.ByIso3("UKR")!;
         var rus = Index.ByIso3("RUS")!;
         // Ukraine has its own two parts plus Crimea and Sevastopol; Russia has no polygon left in the Crimea box.
         Assert.Equal(4, ukr.Polygons.Count);
         Assert.DoesNotContain(rus.Polygons, p => p.Rings[0].All(q => q.LatitudeDeg is > 44.3 and < 46.3 && q.LongitudeDeg is > 32.4 and < 36.7));
+        Assert.Equal(["Crimea shown as part of Ukraine (UN General Assembly resolution 68/262)"], NaturalEarthBoundaries.TransitionalDefaultRules.Descriptions);
+    }
+
+    [Fact]
+    public void RulesComeFromTheApp()
+    {
+        using var rules = RegionTestData.Json("{\"rules\": [" + BoundaryRulesTests.CrimeaRule + "]}");
+        var withRules = CountryIndex.LoadNaturalEarth(rules);
+        Assert.Equal("UKR", withRules.Find(new GeoPosition(45.0, 34.1))?.Iso3);
+        Assert.Equal(Index.All.Select(c => (c.Iso3, c.Polygons.Count)), withRules.All.Select(c => (c.Iso3, c.Polygons.Count)));
+
+        using var none = RegionTestData.Json("{\"rules\": []}");
+        var asInTheFile = CountryIndex.LoadNaturalEarth(none);
+        Assert.Equal("RUS", asInTheFile.Find(new GeoPosition(45.0, 34.1))?.Iso3);   // Natural Earth's default view
+
+        using var bad = RegionTestData.Json("{\"rules\": [{\"kind\": \"moveAdmin1\", \"codes\": [\"UA-99\"], \"from\": \"RUS\", \"to\": \"UKR\", \"reason\": \"r\"}]}");
+        Assert.Throws<BoundaryRuleException>(() => CountryIndex.LoadNaturalEarth(bad));
+    }
+
+    [Fact]
+    public void FacadeWrapsABoundarySet()
+    {
+        var set = NaturalEarthBoundaries.LoadBundled(NaturalEarthBoundaries.TransitionalDefaultRules);
+        var index = CountryIndex.From(set);
+        Assert.Same(set.Regions, index.Regions);
+        Assert.Equal(set.Regions.All.Count, index.All.Count);
+        var sudan = index.Find(new GeoPosition(15.5, 32.53))!;
+        Assert.Same(sudan, index.ByIso3("SDN"));
+        Assert.Same(sudan, index.Resolve("Sudan"));
+        Assert.Equal(set.Regions.ById("SDN")!.Polygons, sudan.Polygons);
+        Assert.Equal(set.Regions.ById("SDN")!.LabelPoint, sudan.LabelPoint);
     }
 
     [Fact]

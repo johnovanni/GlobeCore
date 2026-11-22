@@ -15,8 +15,11 @@ public static class EarthAssets
     public const string LandBoundariesFile = "ne_50m_admin_0_boundary_lines_land.geojson";
     public const string CountriesFile = "ne_50m_admin_0_countries.geojson";
     public const string PlateBoundariesFile = "plate_boundaries.geojson";
-    /// <summary>Natural Earth's admin-1 polygons of Crimea and Sevastopol, used to show them as part of Ukraine (UN practice).</summary>
-    public const string CrimeaRegionsFile = CrimeaFixup.RegionsFile;
+    /// <summary>
+    /// Natural Earth 5.1.2's admin-1 polygons of Crimea and Sevastopol (an extract): the bundled set's admin-1 file, which
+    /// a <c>moveAdmin1</c> rule uses to show them as part of Ukraine (UN practice). See <see cref="NaturalEarthBoundaries"/>.
+    /// </summary>
+    public const string CrimeaRegionsFile = "ne_50m_admin_1_crimea_sevastopol.geojson";
 
     private const string Prefix = "GlobeCore.Earth.Assets.";
 

@@ -103,6 +103,17 @@ public class EarthAssetsTests
     }
 
     [Fact]
+    public void LandBoundariesComeFromABoundarySet()
+    {
+        var set = NaturalEarthBoundaries.LoadBundled(GlobeCore.Regions.BoundaryRules.None);
+        var all = NaturalEarthLines.LandBoundaries(set);
+        using var s = EarthAssets.Open("ne_50m_admin_0_boundary_lines_land.geojson");
+        Assert.Equal(GeoJsonLines.Read(s).Count, all.Count);   // no rules: Natural Earth's lines as they are
+        using var rules = RegionTestData.Json("{\"rules\": [" + BoundaryRulesTests.CrimeaRule + "]}");
+        Assert.Equal(NaturalEarthLines.LandBoundaries().Select(l => l.ToList()), NaturalEarthLines.LandBoundaries(rules).Select(l => l.ToList()));
+    }
+
+    [Fact]
     public void EarthBodyIsTheSphereOfRadius6371()
     {
         var e = EarthBody.Instance;
