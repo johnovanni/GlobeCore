@@ -60,7 +60,11 @@ public sealed class BoundaryValidator(
         return new ValidationResult(problems);
     }
 
-    /// <summary>Applies the rules, then validates; a rule that does not match is a problem, not an exception.</summary>
+    /// <summary>
+    /// Applies the rules, then validates. A rule that does not match is a problem, not an exception, and so is any other
+    /// failure while the set is built or checked (for example a coordinate out of range in a downloaded file):
+    /// "the set could not be built: ...". Only <see cref="OutOfMemoryException"/> is let through.
+    /// </summary>
     /// <param name="set">The set with the rules applied, or null when it is not valid.</param>
     public ValidationResult Validate(RawBoundaryData raw, BoundaryRules rules, out BoundarySet? set)
     {
@@ -68,15 +72,20 @@ public sealed class BoundaryValidator(
         ArgumentNullException.ThrowIfNull(rules);
         set = null;
         BoundarySet applied;
+        ValidationResult result;
         try
         {
             applied = rules.Apply(raw);
+            result = Validate(applied);
         }
         catch (BoundaryRuleException ex)
         {
             return new ValidationResult([ex.Message]);
         }
-        var result = Validate(applied);
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return new ValidationResult([$"the set could not be built: {ex.Message}"]);
+        }
         if (result.IsValid) set = applied;
         return result;
     }

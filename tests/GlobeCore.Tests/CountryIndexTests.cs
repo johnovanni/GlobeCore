@@ -7,7 +7,7 @@ namespace GlobeCore.Tests;
 
 public class CountryIndexTests
 {
-    private static readonly CountryIndex Index = CountryIndex.LoadNaturalEarth();
+    private static readonly CountryIndex Index = CountryIndex.From(RegionTestData.CrimeaSet);
 
     [Fact]
     public void FindsSudanAtKhartoum() =>
@@ -99,7 +99,7 @@ public class CountryIndexTests
         // Ukraine has its own two parts plus Crimea and Sevastopol; Russia has no polygon left in the Crimea box.
         Assert.Equal(4, ukr.Polygons.Count);
         Assert.DoesNotContain(rus.Polygons, p => p.Rings[0].All(q => q.LatitudeDeg is > 44.3 and < 46.3 && q.LongitudeDeg is > 32.4 and < 36.7));
-        Assert.Equal(["Crimea shown as part of Ukraine (UN General Assembly resolution 68/262)"], NaturalEarthBoundaries.TransitionalDefaultRules.Descriptions);
+        Assert.Equal(["Crimea shown as part of Ukraine (UN General Assembly resolution 68/262)"], RegionTestData.CrimeaRules.Descriptions);
     }
 
     [Fact]
@@ -114,14 +114,14 @@ public class CountryIndexTests
         var asInTheFile = CountryIndex.LoadNaturalEarth(none);
         Assert.Equal("RUS", asInTheFile.Find(new GeoPosition(45.0, 34.1))?.Iso3);   // Natural Earth's default view
 
-        using var bad = RegionTestData.Json("{\"rules\": [{\"kind\": \"moveAdmin1\", \"codes\": [\"UA-99\"], \"from\": \"RUS\", \"to\": \"UKR\", \"reason\": \"r\"}]}");
+        using var bad = RegionTestData.Json("{\"rules\": [{\"kind\": \"moveAdmin1\", \"codes\": [\"UA-99\"], \"from\": \"RUS\", \"to\": \"UKR\", \"description\": \"d\", \"reason\": \"r\"}]}");
         Assert.Throws<BoundaryRuleException>(() => CountryIndex.LoadNaturalEarth(bad));
     }
 
     [Fact]
     public void FacadeWrapsABoundarySet()
     {
-        var set = NaturalEarthBoundaries.LoadBundled(NaturalEarthBoundaries.TransitionalDefaultRules);
+        var set = NaturalEarthBoundaries.LoadBundled(RegionTestData.CrimeaRules);
         var index = CountryIndex.From(set);
         Assert.Same(set.Regions, index.Regions);
         Assert.Equal(set.Regions.All.Count, index.All.Count);

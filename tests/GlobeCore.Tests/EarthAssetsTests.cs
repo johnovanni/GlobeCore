@@ -85,7 +85,7 @@ public class EarthAssetsTests
     public void NaturalEarthLinesReadTheEmbeddedFiles()
     {
         var coast = NaturalEarthLines.Coastlines();
-        var borders = NaturalEarthLines.LandBoundaries();
+        var borders = NaturalEarthLines.LandBoundaries(RegionTestData.CrimeaSet);
         Assert.True(coast.Count > 1000);
         Assert.True(borders.Count > 100);
         using var s = EarthAssets.Open("ne_50m_admin_0_boundary_lines_land.geojson");
@@ -96,7 +96,7 @@ public class EarthAssetsTests
     public void LandBoundariesHaveNoLineBetweenCrimeaAndUkraine()
     {
         // The Perekop isthmus line runs from about (46.10, 33.59) to (45.73, 35.00); no border line may cross the isthmus.
-        var borders = NaturalEarthLines.LandBoundaries();
+        var borders = NaturalEarthLines.LandBoundaries(RegionTestData.CrimeaSet);
         Assert.DoesNotContain(borders, l => l.Any(p => p.LatitudeDeg is > 45.7 and < 46.2 && p.LongitudeDeg is > 33.5 and < 35.1));
         // The Kerch Strait line (Ukraine-Russia) stays.
         Assert.Contains(borders, l => l.Any(p => p.LatitudeDeg is > 44.9 and < 45.7 && p.LongitudeDeg is > 36.5 and < 36.8));
@@ -110,7 +110,7 @@ public class EarthAssetsTests
         using var s = EarthAssets.Open("ne_50m_admin_0_boundary_lines_land.geojson");
         Assert.Equal(GeoJsonLines.Read(s).Count, all.Count);   // no rules: Natural Earth's lines as they are
         using var rules = RegionTestData.Json("{\"rules\": [" + BoundaryRulesTests.CrimeaRule + "]}");
-        Assert.Equal(NaturalEarthLines.LandBoundaries().Select(l => l.ToList()), NaturalEarthLines.LandBoundaries(rules).Select(l => l.ToList()));
+        Assert.Equal(NaturalEarthLines.LandBoundaries(RegionTestData.CrimeaSet).Select(l => l.ToList()), NaturalEarthLines.LandBoundaries(rules).Select(l => l.ToList()));
     }
 
     [Fact]

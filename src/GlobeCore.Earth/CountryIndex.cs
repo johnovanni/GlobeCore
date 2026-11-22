@@ -45,14 +45,6 @@ public sealed class CountryIndex
         return new CountryIndex(regions);
     }
 
-    /// <summary>
-    /// The bundled Natural Earth 5.1.2 countries with the TRANSITIONAL built-in rule
-    /// (<see cref="NaturalEarthBoundaries.TransitionalDefaultRules"/>): Crimea and Sevastopol are part of Ukraine, as on
-    /// UN maps (UN General Assembly resolution 68/262). This keeps today's callers' results until each app supplies its
-    /// own rules (<see cref="LoadNaturalEarth(Stream)"/>); then this default goes.
-    /// </summary>
-    public static CountryIndex LoadNaturalEarth() => From(NaturalEarthBoundaries.TransitionalDefaultSet);
-
     /// <summary>The bundled Natural Earth 5.1.2 countries with the app's rules file applied (see <see cref="BoundaryRules.Parse"/>).</summary>
     /// <exception cref="BoundaryRuleException">The rules are malformed or do not match the bundled files.</exception>
     public static CountryIndex LoadNaturalEarth(Stream rulesJson) =>

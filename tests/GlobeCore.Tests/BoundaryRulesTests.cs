@@ -105,6 +105,18 @@ public class BoundaryRulesTests
     }
 
     [Fact]
+    // Ruling R3: a rule that changes what the map shows must say so on screen; an alias changes only name matching.
+    public void MoveAndMergeRulesNeedADescription()
+    {
+        var merge = Assert.Throws<BoundaryRuleException>(() => Rules("""{"kind": "mergeUnits", "units": ["SOL"], "into": "SOM", "reason": "C16"}"""));
+        Assert.Contains("description", merge.Message);
+        Assert.Throws<BoundaryRuleException>(() => Rules("""{"kind": "mergeUnits", "units": ["SOL"], "into": "SOM", "reason": "C16", "description": " "}"""));
+        var move = Assert.Throws<BoundaryRuleException>(() => Rules(CrimeaRule.Replace("\"description\": \"Crimea shown as part of Ukraine (UN General Assembly resolution 68/262)\",", "")));
+        Assert.Contains("description", move.Message);
+        Assert.Empty(Rules("""{"kind": "alias", "names": {"X": "SOM"}, "reason": "a source spelling"}""").Descriptions);
+    }
+
+    [Fact]
     public void MalformedRulesAreRejected()
     {
         Assert.Throws<BoundaryRuleException>(() => Rules("""{"kind": "teleport", "reason": "r"}"""));
@@ -134,14 +146,14 @@ public class BoundaryRulesTests
         Assert.Equal(["Gamma counted with Alpha"], rules.Descriptions);
 
         // Rules that name a region the set lacks reject it.
-        Assert.Throws<BoundaryRuleException>(() => Rules("""{"kind": "mergeUnits", "units": ["OMEGA"], "into": "ALPHA", "reason": "r"}""").Apply(Sample()));
+        Assert.Throws<BoundaryRuleException>(() => Rules("""{"kind": "mergeUnits", "units": ["OMEGA"], "into": "ALPHA", "description": "d", "reason": "r"}""").Apply(Sample()));
         Assert.Throws<BoundaryRuleException>(() => Rules("""{"kind": "alias", "names": {"Omega": "OMEGA"}, "reason": "r"}""").Apply(Sample()));
     }
 
     [Fact]
     public void SomalilandMergesAsInCountryResolver()
     {
-        var rules = Rules("""{"kind": "mergeUnits", "units": ["SOL"], "into": "SOM", "reason": "C16"}""");
+        var rules = Rules("""{"kind": "mergeUnits", "units": ["SOL"], "into": "SOM", "description": "Somaliland counted with Somalia", "reason": "C16"}""");
         var set = rules.Apply(Bundled);
         Assert.Equal("SOM", set.Regions.Find(new GeoPosition(9.56, 44.06))?.Id);   // Hargeisa
         Assert.Null(set.Regions.ById("SOL"));

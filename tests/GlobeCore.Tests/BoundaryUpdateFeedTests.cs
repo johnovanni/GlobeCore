@@ -118,15 +118,21 @@ public sealed class BoundaryUpdateFeedTests : IDisposable
         public required BoundaryStore Store { get; init; }
         public required RecordingLog Log { get; init; }
         public required BoundarySet Initial { get; init; }
+        public required TestClock Clock { get; init; }
         public DownloadMeter? Meter { get; init; }
         public void Dispose() => Http.Dispose();
     }
 
-    private Rig MakeRig(Func<HttpRequestMessage, HttpResponseMessage> respond, bool withMeter = false, long? limit = null)
+    // The app's rules and probes files as bytes, for the rejection fingerprint (the rig's rules are the Crimea rule).
+    private static readonly byte[] RulesBytes = Encoding.UTF8.GetBytes("{\"rules\": [" + BoundaryRulesTests.CrimeaRule + "]}");
+    private static readonly byte[] ProbesBytes = Encoding.UTF8.GetBytes("""{"probes": [{"lat": 15.6, "lon": 32.5, "expect": "SDN"}]}""");
+    private static readonly string Fingerprint = BoundaryUpdateFeed.Fingerprint(RulesBytes, ProbesBytes);
+
+    private Rig MakeRig(Func<HttpRequestMessage, HttpResponseMessage> respond, bool withMeter = false, long? limit = null, string? fingerprint = null)
     {
         var web = new Web { Respond = respond };
         var http = new FeedHttp("GlobeCoreTests/1.0", web);
-        var rules = NaturalEarthBoundaries.TransitionalDefaultRules;
+        var rules = RegionTestData.CrimeaRules;
         var initial = NaturalEarthBoundaries.LoadBundled(rules);
         var validator = new BoundaryValidator(
             [(new GeoPosition(15.6, 32.5), "SDN"), (new GeoPosition(50.45, 30.5), "UKR"), (new GeoPosition(45.0, 34.0), "UKR")],
@@ -140,8 +146,10 @@ public sealed class BoundaryUpdateFeedTests : IDisposable
             meter = new DownloadMeter(new TestClock(Noon), TimeZoneInfo.Utc, null, log) { LimitBytes = limit };
             http.BytesReceived += meter.Add;
         }
-        var feed = new BoundaryUpdateFeed(new NaturalEarthBoundarySource(http), rules, validator, store, current, log, meter);
-        return new Rig { Web = web, Http = http, Feed = feed, Current = current, Store = store, Log = log, Initial = initial, Meter = meter };
+        var clock = new TestClock(Noon);
+        var feed = new BoundaryUpdateFeed(new NaturalEarthBoundarySource(http), rules, validator, store, current, log,
+            fingerprint ?? Fingerprint, meter, clock);
+        return new Rig { Web = web, Http = http, Feed = feed, Current = current, Store = store, Log = log, Initial = initial, Clock = clock, Meter = meter };
     }
 
     private const string RejectedPrefix = "Rejected v5.2.0: ";
@@ -302,6 +310,7 @@ public sealed class BoundaryUpdateFeedTests : IDisposable
         var ex = await Assert.ThrowsAsync<HttpRequestException>(() => rig.Feed.RunOnceAsync(CancellationToken.None));
         Assert.NotNull(ex);
         Assert.Same(rig.Initial, rig.Current.Set);
+        rig.Clock.UtcNow = Noon + BoundaryUpdateFeed.DownloadBackoff;   // after the back-off (ruling R5)
         Assert.Equal(FeedRunResult.Ok, await rig.Feed.RunOnceAsync(CancellationToken.None));   // not remembered as rejected
         Assert.Equal("v5.2.0", rig.Current.Set.Tag);
     }
@@ -426,12 +435,14 @@ public sealed class BoundaryUpdateFeedTests : IDisposable
         using (var first = MakeRig(Server(Release520, n => n == NaturalEarthBoundaries.LinesFile ? truncated : Files520.Value.GetValueOrDefault(n))))
             Assert.Equal(FeedRunResult.Attention, await first.Feed.RunOnceAsync(CancellationToken.None));
         Assert.True(File.Exists(Path.Combine(_dir, "boundaries", "rejected.json")));
+        Assert.Contains(Fingerprint, File.ReadAllText(Path.Combine(_dir, "boundaries", "rejected.json")));
 
-        // A new session (same store folder): the bundled set again, and the same release on the server.
+        // A new session (same store folder, same rules and probes): the bundled set again, and the same tag on the server,
+        // now with whole files. The remembered rejection stands (same fingerprint), so the release is not looked at again.
         using var second = MakeRig(Server(Release520, n => Files520.Value.GetValueOrDefault(n)));
         Assert.Contains(RejectedPrefix, second.Feed.StatusNote);   // shown from the start
         Assert.Equal(FeedRunResult.Attention, await second.Feed.RunOnceAsync(CancellationToken.None));
-        Assert.Equal(0, second.Web.RawCount);   // no 6 MB download just to reject it again
+        Assert.Equal(0, second.Web.RawCount);   // not downloaded again (6.2 MB), although the files would now pass
         Assert.Same(second.Initial, second.Current.Set);
 
         // A newer tag clears it.
@@ -449,6 +460,167 @@ public sealed class BoundaryUpdateFeedTests : IDisposable
         using var rig = MakeRig(Server(Release520, n => Files520.Value.GetValueOrDefault(n)));
         Assert.Equal(FeedRunResult.Ok, await rig.Feed.RunOnceAsync(CancellationToken.None));
         Assert.Equal("v5.2.0", rig.Current.Set.Tag);
+    }
+
+    // ---- I1: an exception while the set is built is a rejection, not an endless retry
+
+    [Fact]
+    public async Task AVertexOutOfRangeIsARememberedRejectionNotARetry()
+    {
+        var countries = JsonNode.Parse(Files520.Value[NaturalEarthBoundaries.CountriesFile])!;
+        var lux = countries["features"]!.AsArray().Single(f => (string?)f!["properties"]!["ISO_A3_EH"] == "LUX")!;
+        var geometry = lux["geometry"]!;
+        var ring = geometry["type"]!.GetValue<string>() == "Polygon" ? geometry["coordinates"]![0]! : geometry["coordinates"]![0]![0]!;
+        ring[1]![1] = 95.0;   // latitude 95°: it parses, but it is no point on the globe
+        var bad = Encoding.UTF8.GetBytes(countries.ToJsonString());
+        Func<string, byte[]?> files = n => n == NaturalEarthBoundaries.CountriesFile ? bad : Files520.Value.GetValueOrDefault(n);
+        using (var rig = MakeRig(Server(Release520, files)))
+        {
+            Assert.Equal(FeedRunResult.Attention, await rig.Feed.RunOnceAsync(CancellationToken.None));
+            Assert.Contains(RejectedPrefix + "the set could not be built: ", rig.Feed.StatusNote);
+            Assert.Same(rig.Initial, rig.Current.Set);
+            Assert.Empty(rig.Store.StoredTags());
+
+            int raws = rig.Web.RawCount;
+            rig.Clock.UtcNow = Noon.AddHours(24);
+            Assert.Equal(FeedRunResult.Attention, await rig.Feed.RunOnceAsync(CancellationToken.None));
+            Assert.Equal(raws, rig.Web.RawCount);   // not downloaded again
+        }
+        Assert.Contains("v5.2.0", File.ReadAllText(Path.Combine(_dir, "boundaries", "rejected.json")));   // remembered
+
+        // A restart with the same rules and probes does not download it again either.
+        using var next = MakeRig(Server(Release520, files));
+        Assert.Equal(FeedRunResult.Attention, await next.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Equal(0, next.Web.RawCount);
+    }
+
+    // ---- I2 / ruling R7: a remembered rejection carries the fingerprint of the rules, the probes and GlobeCore
+
+    [Fact]
+    public void TheFingerprintFollowsTheRulesAndProbesBytes()
+    {
+        Assert.Matches("^[0-9a-f]{64}$", Fingerprint);
+        Assert.Equal(Fingerprint, BoundaryUpdateFeed.Fingerprint([.. RulesBytes], [.. ProbesBytes]));
+        Assert.NotEqual(Fingerprint, BoundaryUpdateFeed.Fingerprint([.. RulesBytes, (byte)' '], ProbesBytes));
+        Assert.NotEqual(Fingerprint, BoundaryUpdateFeed.Fingerprint(RulesBytes, [.. ProbesBytes, (byte)' ']));
+    }
+
+    [Fact]
+    public async Task ARememberedRejectionIsForgottenWhenTheRulesChange()
+    {
+        var truncated = Files520.Value[NaturalEarthBoundaries.LinesFile][..5000];
+        using (var first = MakeRig(Server(Release520, n => n == NaturalEarthBoundaries.LinesFile ? truncated : Files520.Value.GetValueOrDefault(n))))
+            Assert.Equal(FeedRunResult.Attention, await first.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.True(File.Exists(Path.Combine(_dir, "boundaries", "rejected.json")));
+
+        // An app update changed its rules file (one more byte): the rejection no longer stands, so the release is looked at again.
+        var changedRules = BoundaryUpdateFeed.Fingerprint([.. RulesBytes, (byte)'\n'], ProbesBytes);
+        using var second = MakeRig(Server(Release520, n => Files520.Value.GetValueOrDefault(n)), fingerprint: changedRules);
+        Assert.DoesNotContain("Rejected", second.Feed.StatusNote);
+        Assert.False(File.Exists(Path.Combine(_dir, "boundaries", "rejected.json")));   // forgotten and deleted
+        Assert.Equal(FeedRunResult.Ok, await second.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Equal(3, second.Web.RawCount);
+        Assert.Equal("v5.2.0", second.Current.Set.Tag);
+    }
+
+    [Fact]
+    public async Task ARememberedRejectionWithoutAFingerprintIsForgotten()
+    {
+        // As written before the fingerprint existed.
+        Directory.CreateDirectory(Path.Combine(_dir, "boundaries"));
+        File.WriteAllText(Path.Combine(_dir, "boundaries", "rejected.json"), """{"tag":"v5.2.0","reason":"Rejected v5.2.0: old reason"}""");
+        using var rig = MakeRig(Server(Release520, n => Files520.Value.GetValueOrDefault(n)));
+        Assert.DoesNotContain("Rejected", rig.Feed.StatusNote);
+        Assert.False(File.Exists(Path.Combine(_dir, "boundaries", "rejected.json")));
+        Assert.Equal(FeedRunResult.Ok, await rig.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Equal("v5.2.0", rig.Current.Set.Tag);
+        Assert.Empty(rig.Log.Warnings);
+    }
+
+    // ---- ruling R5: after a failed release download, no download for 6 hours
+
+    [Theory]
+    [InlineData("reset")]
+    [InlineData("503")]
+    [InlineData("timeout")]
+    public async Task AFailedDownloadIsNotTriedAgainForSixHours(string failure)
+    {
+        bool broken = true;
+        var ok = Server(Release520, n => Files520.Value.GetValueOrDefault(n));
+        using var rig = MakeRig(req =>
+        {
+            if (!broken || !req.RequestUri!.ToString().StartsWith(Raw, StringComparison.Ordinal)) return ok(req);
+            return failure switch
+            {
+                "reset" => throw new HttpRequestException("connection reset"),
+                "503" => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable),
+                _ => throw new TimeoutException("raw.githubusercontent.com did not respond within 100 s"),   // as FeedHttp reports it
+            };
+        });
+
+        // The first failure is the normal retrying failure.
+        await Assert.ThrowsAnyAsync<Exception>(() => rig.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Same(rig.Initial, rig.Current.Set);
+        int raws = rig.Web.RawCount;
+        Assert.Equal(1, raws);   // the first file failed
+        var nextTry = "next try after " + (Noon + BoundaryUpdateFeed.DownloadBackoff).ToLocalTime()
+            .ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Contains(nextTry, rig.Feed.StatusNote);
+        Assert.Contains("Using Natural Earth 5.1.2", rig.Feed.StatusNote);
+
+        // The release check keeps its schedule; within the 6 hours the download is skipped and the same failure reported.
+        broken = false;
+        foreach (var minutes in new[] { 1, 10, 60, 359 })
+        {
+            rig.Clock.UtcNow = Noon.AddMinutes(minutes);
+            int requests = rig.Web.Count;
+            var again = await Assert.ThrowsAsync<HttpRequestException>(() => rig.Feed.RunOnceAsync(CancellationToken.None));
+            Assert.Contains(nextTry, again.Message);
+            Assert.Contains(nextTry, rig.Feed.StatusNote);
+            Assert.Equal(requests + 1, rig.Web.Count);   // the release check only, sent with its ETag
+            Assert.Equal("\"r1\"", rig.Web.Requests[^1].Headers.IfNoneMatch.Single().Tag);
+            Assert.Equal(raws, rig.Web.RawCount);
+        }
+
+        // After 6 hours it downloads again.
+        rig.Clock.UtcNow = Noon + BoundaryUpdateFeed.DownloadBackoff;
+        Assert.Equal(FeedRunResult.Ok, await rig.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Equal("v5.2.0", rig.Current.Set.Tag);
+        Assert.DoesNotContain("next try", rig.Feed.StatusNote);
+    }
+
+    [Fact]
+    public async Task SchedulerRetriesAFailedDownloadOnlyAfterSixHours()
+    {
+        bool broken = true;
+        using var rig = MakeRig(Server(Release520, n => broken ? throw new HttpRequestException("connection reset") : Files520.Value.GetValueOrDefault(n)));
+        using var scheduler = new FeedScheduler([rig.Feed], rig.Clock, rig.Log, "idle");
+        await scheduler.TickAsync(CancellationToken.None);
+        Assert.Equal(FeedState.Retrying, Assert.Single(scheduler.Statuses).State);
+        broken = false;
+        for (var t = Noon; t < Noon + BoundaryUpdateFeed.DownloadBackoff; t = t.AddMinutes(10))
+        {
+            rig.Clock.UtcNow = t;
+            await scheduler.TickAsync(CancellationToken.None);
+        }
+        Assert.Equal(1, rig.Web.RawCount);   // the one failed file; nothing more in 6 hours
+        Assert.Contains("next try after", Assert.Single(scheduler.Statuses).Note);
+        rig.Clock.UtcNow = Noon + BoundaryUpdateFeed.DownloadBackoff + TimeSpan.FromMinutes(10);
+        await scheduler.TickAsync(CancellationToken.None);
+        Assert.Equal(FeedState.Ok, Assert.Single(scheduler.Statuses).State);
+        Assert.Equal("v5.2.0", rig.Current.Set.Tag);
+    }
+
+    // ---- a store folder that does not exist yet
+
+    [Fact]
+    public async Task AMissingStoreFolderLogsNoWarning()
+    {
+        using var rig = MakeRig(Server(Release512, _ => null));
+        Assert.False(Directory.Exists(Path.Combine(_dir, "boundaries")));
+        Assert.Equal(FeedRunResult.Ok, await rig.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Equal(FeedRunResult.Ok, await rig.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Empty(rig.Log.Warnings);
     }
 
     [Fact]

@@ -76,6 +76,25 @@ public class BoundaryValidatorTests
     }
 
     [Fact]
+    public void ASetThatCannotBeBuiltIsAProblemNotAnException()
+    {
+        // A vertex at latitude 95° parses, but splitting the polygons at ±180° refuses it (DateLine: ArgumentException).
+        var sample = Sample();
+        var broken = sample with
+        {
+            Regions = [.. sample.Regions.Select(r => r.Id == "GAMMA" ? r with { Parts = [new RawPolygon([[(50, 50), (60, 95), (60, 60), (50, 50)]])] } : r)],
+        };
+        var result = Validator().Validate(broken, Rules(MovePeninsula), out var set);
+        Assert.False(result.IsValid);
+        Assert.Null(set);
+        Assert.StartsWith("the set could not be built: ", result.Reason);
+
+        // The name hook's own failures were already problems; the probes and count checks never throw on a built set.
+        var hook = new BoundaryValidator(Probes, _ => throw new InvalidOperationException("boom"), 3).Validate(Sample(), Rules(MovePeninsula), out _);
+        Assert.Contains("boom", hook.Reason);
+    }
+
+    [Fact]
     public void ProbesFileIsRead()
     {
         var probes = BoundaryValidator.ReadProbes(Json("""

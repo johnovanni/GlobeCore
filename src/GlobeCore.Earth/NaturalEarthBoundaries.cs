@@ -33,45 +33,6 @@ public static class NaturalEarthBoundaries
         ["Timor-Leste"] = "TLS", ["Burma"] = "MMR", ["Ivory Coast"] = "CIV", ["Swaziland"] = "SWZ",
     };
 
-    /// <summary>
-    /// TRANSITIONAL. The Crimea rule (Crimea and Sevastopol as part of Ukraine, UN General Assembly resolution 68/262;
-    /// EarthRelief3D ruling R15), built in so that the parameterless <see cref="CountryIndex.LoadNaturalEarth()"/> and
-    /// <see cref="NaturalEarthLines.LandBoundaries()"/> keep their results until the apps supply their own
-    /// <c>boundary-rules.json</c> (Plan 2b, Tasks 3 and 4). Then those callers move to the overloads that take the app's
-    /// rules, and this default goes. New code should not depend on it.
-    /// </summary>
-    internal const string TransitionalDefaultRulesJson = """
-        {
-          "rules": [
-            {
-              "kind": "moveAdmin1",
-              "name": "moveAdmin1 UA-43",
-              "codes": ["UA-43", "UA-40"],
-              "from": "RUS",
-              "to": "UKR",
-              "expectParts": 1,
-              "expectLines": 1,
-              "description": "Crimea shown as part of Ukraine (UN General Assembly resolution 68/262)",
-              "reason": "UN practice (owner's decision Q3, EarthRelief3D ruling R15): UN General Assembly resolution 68/262 of 27 March 2014, Territorial integrity of Ukraine. Natural Earth's default admin-0 file draws Crimea and Sevastopol in Russia; their admin-1 polygons (UA-43, UA-40) move to Ukraine and the Perekop line, now internal, goes."
-            }
-          ]
-        }
-        """;
-
-    private static readonly Lazy<BoundaryRules> TransitionalRules = new(() =>
-    {
-        using var s = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(TransitionalDefaultRulesJson));
-        return BoundaryRules.Parse(s);
-    });
-
-    private static readonly Lazy<BoundarySet> TransitionalSet = new(() => LoadBundled(TransitionalRules.Value));
-
-    /// <summary>TRANSITIONAL: <see cref="TransitionalDefaultRulesJson"/>, parsed.</summary>
-    internal static BoundaryRules TransitionalDefaultRules => TransitionalRules.Value;
-
-    /// <summary>TRANSITIONAL: the bundled set with <see cref="TransitionalDefaultRules"/>, read once and shared.</summary>
-    internal static BoundarySet TransitionalDefaultSet => TransitionalSet.Value;
-
     /// <summary>"Natural Earth 5.1.2 (2022-05-13)" from the tag and the release date.</summary>
     public static string EditionName(string tag, DateOnly date) =>
         $"Natural Earth {tag.TrimStart('v', 'V')} ({date:yyyy-MM-dd})";

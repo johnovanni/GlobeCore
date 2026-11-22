@@ -50,6 +50,7 @@ is rejected with `BoundaryRuleException` ("rule moveAdmin1 UA-43 no longer match
       "kind": "mergeUnits",                // a unit's polygons join another; its names resolve to it
       "units": ["SOL"],
       "into": "SOM",
+      "description": "Somaliland counted with Somalia",
       "reason": "Somaliland is not a separate unit in the UN humanitarian sources (C16)"
     },
     {
@@ -68,8 +69,9 @@ is rejected with `BoundaryRuleException` ("rule moveAdmin1 UA-43 no longer match
   boundary, now internal, like the Perekop line) are removed (exactly `expectLines` when given).
 - **`mergeUnits`**: every unit and `into` must be in the set. A chain (A into B, B into C) ends at C.
 - **`alias`**: every target must be in the set. Aliases replace the file's own names and the built-in aliases.
-- `description` (optional) is the text shown on screen with the edition (`BoundarySet.Describe()`,
-  `BoundaryRules.Descriptions`); a rule without one is applied but not listed.
+- `description` is the text shown on screen with the edition (`BoundarySet.Describe()`,
+  `BoundaryRules.Descriptions`). It is required for `moveAdmin1` and `mergeUnits`, which change the map (a rule
+  without one is rejected), and optional for `alias`, which changes only name matching (one without is not listed).
 - Order: all `moveAdmin1` rules first, in file order, on Natural Earth's geometry; then the polygons are split at ±180°;
   then `mergeUnits` and `alias` rules in file order. Comments and trailing commas are allowed; unknown kinds or keys
   are rejected.
@@ -78,14 +80,12 @@ is rejected with `BoundaryRuleException` ("rule moveAdmin1 UA-43 no longer match
 bundled set's, every probe point lands in its country, every name the app's sources use still resolves).
 `BoundaryValidator.ReadProbes` reads `{"probes": [{"name": "Khartoum", "lat": 15.5, "lon": 32.53, "expect": "SDN"}]}`.
 
-### Transitional default (until the apps supply their rules)
+### No built-in rules
 
-`CountryIndex.LoadNaturalEarth()` and `NaturalEarthLines.LandBoundaries()` without arguments apply a built-in copy of
-the Crimea rule (`NaturalEarthBoundaries.TransitionalDefaultRulesJson`, the `moveAdmin1 UA-43` rule above), so callers
-that relied on the old built-in fix-up (EarthRelief3D, and EarthWatch3D once it moves to this branch) get the same
-results. It is transitional: once each app passes its own `boundary-rules.json`
-(`CountryIndex.LoadNaturalEarth(stream)`, `CountryIndex.From(set)`, `NaturalEarthLines.LandBoundaries(stream or set)`),
-the parameterless overloads and this default go.
+GlobeCore applies no rules of its own. The transitional built-in copy of the Crimea rule, and the parameterless
+`CountryIndex.LoadNaturalEarth()` and `NaturalEarthLines.LandBoundaries()` that used it, were removed (Plan 2b, ruling
+R6) once both apps passed their own `boundary-rules.json`. Callers pass the app's rules: `CountryIndex.LoadNaturalEarth(stream)`,
+`CountryIndex.From(set)`, `NaturalEarthLines.LandBoundaries(stream or set)`.
 
 ## Crimea and Sevastopol (UN practice)
 
@@ -127,3 +127,15 @@ release of `nvkelso/natural-earth-vector` (ETag-aware). Only a newer tag downloa
 (`ne_50m_admin_0_countries`, `ne_50m_admin_0_boundary_lines_land`, and the **full** `ne_50m_admin_1_states_provinces`),
 applies the app's rules, validates, stores the set under `<data>/cache/boundaries/<tag>/` and swaps it into
 `CurrentBoundaries`. A rejected release leaves the current set in place and shows the "Borders" dot amber with the reason.
+
+- Adopting a release downloads about 6.2 MB (countries 3.08 MB, lines 0.76 MB, admin-1 2.33 MB at v5.1.2), once per
+  release; the daily check is a few KB (and an unchanged answer, HTTP 304, has no body).
+- Anything that goes wrong while a downloaded set is read, built or checked is a rejection, never a retry, so a bad
+  release is not downloaded again and again.
+- A rejection is remembered in `<data>/cache/boundaries/rejected.json` with a fingerprint
+  (`BoundaryUpdateFeed.Fingerprint`: SHA-256 of the app's rules and probes file bytes and GlobeCore's informational
+  version). A remembered rejection with another fingerprint, or none, is forgotten, so an app update that fixes its
+  rules, or a GlobeCore update, looks at the release again. There is no expiry.
+- After a failed download of the files (network error, timeout, 5xx), the files are not downloaded again for 6 hours
+  (`BoundaryUpdateFeed.DownloadBackoff`, ruling R5). The release check keeps running; until then it reports the same
+  failure with "next try after" a local time.

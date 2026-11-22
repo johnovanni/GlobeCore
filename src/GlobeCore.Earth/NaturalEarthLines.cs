@@ -10,15 +10,6 @@ public static class NaturalEarthLines
     /// <summary>Coastlines: physical, so bundled only (never updated).</summary>
     public static List<IReadOnlyList<GeoPosition>> Coastlines() => Read(EarthAssets.CoastlineFile);
 
-    /// <summary>
-    /// Country borders on land from the bundled Natural Earth 5.1.2 set with the TRANSITIONAL built-in rule
-    /// (<see cref="NaturalEarthBoundaries.TransitionalDefaultRules"/>): the line between Crimea and the rest of Ukraine
-    /// (Perekop isthmus) is left out, as Crimea is part of Ukraine on UN maps. This keeps today's callers' results until
-    /// each app supplies its own rules (<see cref="LandBoundaries(Stream)"/>, <see cref="LandBoundaries(BoundarySet)"/>);
-    /// then this default goes.
-    /// </summary>
-    public static List<IReadOnlyList<GeoPosition>> LandBoundaries() => LandBoundaries(NaturalEarthBoundaries.TransitionalDefaultSet);
-
     /// <summary>Country borders on land from the bundled set with the app's rules file applied (see <see cref="BoundaryRules.Parse"/>).</summary>
     /// <exception cref="BoundaryRuleException">The rules are malformed or do not match the bundled files.</exception>
     public static List<IReadOnlyList<GeoPosition>> LandBoundaries(Stream rulesJson) =>

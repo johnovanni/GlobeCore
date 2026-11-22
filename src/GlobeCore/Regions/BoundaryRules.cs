@@ -47,7 +47,8 @@ public sealed class BoundaryRules
 
     /// <summary>
     /// Reads a rules file: <c>{"rules": [ ... ]}</c>, each rule an object with <c>kind</c>, <c>reason</c> (required, not
-    /// blank), and optional <c>name</c> and <c>description</c>, plus by kind:
+    /// blank), an optional <c>name</c>, and <c>description</c> (the text for the screen; required, not blank, for
+    /// <c>moveAdmin1</c> and <c>mergeUnits</c>, which change the map; optional for <c>alias</c>), plus by kind:
     /// <list type="bullet">
     /// <item><c>moveAdmin1</c>: <c>codes</c> (subdivision codes), <c>from</c> and <c>to</c> (region ids), and optional
     /// <c>expectParts</c> (at least 1) and <c>expectLines</c> (0 or more), the exact numbers of parts and lines it must remove.</item>
@@ -173,6 +174,9 @@ public sealed class BoundaryRules
         string name = OptString(r, "name", label) ?? $"{kind} {first}";
         string reason = OptString(r, "reason", label)
             ?? throw new BoundaryRuleException(name, $"boundary rule {name}: every rule needs a \"reason\"");
+        // Ruling R3: a rule that changes what the map shows is described on screen. An alias changes only name matching.
+        if (description is null && kind is "moveAdmin1" or "mergeUnits")
+            throw new BoundaryRuleException(name, $"boundary rule {name}: a {kind} rule changes the map, so it needs a \"description\" for the screen");
         return new BoundaryRule(kind, name, reason, description);
     }
 

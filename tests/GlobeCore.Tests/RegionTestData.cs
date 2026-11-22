@@ -45,6 +45,17 @@ internal static class RegionTestData
 
     public static BoundaryRules Rules(string rulesArray) => BoundaryRules.Parse(Json("{\"rules\": [" + rulesArray + "]}"));
 
+    /// <summary>The Earth apps' Crimea rule (<see cref="BoundaryRulesTests.CrimeaRule"/>), parsed.</summary>
+    public static BoundaryRules CrimeaRules { get; } = Rules(BoundaryRulesTests.CrimeaRule);
+
+    /// <summary>The Crimea rule as a rules file.</summary>
+    public static Stream CrimeaRulesJson() => Json("{\"rules\": [" + BoundaryRulesTests.CrimeaRule + "]}");
+
+    /// <summary>The bundled Natural Earth 5.1.2 set with the Crimea rule, read once.</summary>
+    public static BoundarySet CrimeaSet => CrimeaSetLazy.Value;
+
+    private static readonly Lazy<BoundarySet> CrimeaSetLazy = new(() => GlobeCore.Earth.NaturalEarthBoundaries.LoadBundled(CrimeaRules));
+
     public const string MovePeninsula = """
         {"kind": "moveAdmin1", "codes": ["P-1", "P-2"], "from": "ALPHA", "to": "BETA", "expectParts": 1, "expectLines": 1,
          "description": "Peninsula shown as part of Beta", "reason": "test ruling"}
