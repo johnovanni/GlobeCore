@@ -77,6 +77,29 @@ public class CountryIndexTests
     }
 
     [Fact]
+    // Ruling R15 (EarthRelief3D; UN General Assembly resolution 68/262): Crimea and Sevastopol are shown as part of Ukraine.
+    public void CrimeaAndSevastopolAreUkraine()
+    {
+        Assert.Equal("UKR", Index.Find(new GeoPosition(45.0, 34.1))?.Iso3);    // central Crimea (Simferopol area)
+        Assert.Equal("UKR", Index.Find(new GeoPosition(44.6, 33.5))?.Iso3);    // Sevastopol
+        Assert.Equal("RUS", Index.Find(new GeoPosition(55.75, 37.62))?.Iso3);  // Moscow
+        Assert.Equal("UKR", Index.Find(new GeoPosition(50.45, 30.52))?.Iso3);  // Kyiv
+        Assert.Equal("RUS", Index.Find(new GeoPosition(45.04, 38.98))?.Iso3);  // Krasnodar, across the Kerch Strait
+    }
+
+    [Fact]
+    public void CrimeaFixupMovesExactlyNaturalEarthsAdmin1Polygons()
+    {
+        var regions = CrimeaFixup.Get();
+        Assert.Equal(2, regions.Polygons.Count);
+        var ukr = Index.ByIso3("UKR")!;
+        var rus = Index.ByIso3("RUS")!;
+        // Ukraine has its own two parts plus Crimea and Sevastopol; Russia has no polygon left in the Crimea box.
+        Assert.Equal(4, ukr.Polygons.Count);
+        Assert.DoesNotContain(rus.Polygons, p => p.Rings[0].All(q => q.LatitudeDeg is > 44.3 and < 46.3 && q.LongitudeDeg is > 32.4 and < 36.7));
+    }
+
+    [Fact]
     public void UnitsMergeSomalilandIntoSomalia()
     {
         var hargeisa = new GeoPosition(9.56, 44.06);

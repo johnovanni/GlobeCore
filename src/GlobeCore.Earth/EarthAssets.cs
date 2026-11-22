@@ -15,11 +15,13 @@ public static class EarthAssets
     public const string LandBoundariesFile = "ne_50m_admin_0_boundary_lines_land.geojson";
     public const string CountriesFile = "ne_50m_admin_0_countries.geojson";
     public const string PlateBoundariesFile = "plate_boundaries.geojson";
+    /// <summary>Natural Earth's admin-1 polygons of Crimea and Sevastopol, used to show them as part of Ukraine (UN practice).</summary>
+    public const string CrimeaRegionsFile = CrimeaFixup.RegionsFile;
 
     private const string Prefix = "GlobeCore.Earth.Assets.";
 
     /// <summary>Every embedded asset's file name.</summary>
-    public static IReadOnlyList<string> Names { get; } = [BlueMarbleFile, CoastlineFile, LandBoundariesFile, PlateBoundariesFile, CountriesFile];
+    public static IReadOnlyList<string> Names { get; } = [BlueMarbleFile, CoastlineFile, LandBoundariesFile, PlateBoundariesFile, CountriesFile, CrimeaRegionsFile];
 
     /// <summary>Opens an embedded asset by file name. The caller disposes the stream.</summary>
     public static Stream Open(string fileName) =>

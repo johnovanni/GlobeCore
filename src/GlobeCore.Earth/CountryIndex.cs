@@ -45,12 +45,16 @@ public sealed class CountryIndex
 
     public IReadOnlyList<Country> All { get; }
 
-    /// <summary>Reads the embedded Natural Earth file.</summary>
+    /// <summary>
+    /// Reads the embedded Natural Earth file. Crimea and Sevastopol are part of Ukraine, as on UN maps (UN General
+    /// Assembly resolution 68/262): <see cref="CrimeaFixup"/> moves them out of Russia's polygons as the file is read.
+    /// </summary>
     public static CountryIndex LoadNaturalEarth()
     {
         using var s = EarthAssets.Open(EarthAssets.CountriesFile);
         using var doc = JsonDocument.Parse(s);
         var entries = new List<Entry>();
+        int movedParts = 0, receivers = 0;
         foreach (var f in doc.RootElement.GetProperty("features").EnumerateArray())
         {
             var p = f.GetProperty("properties");
@@ -63,12 +67,29 @@ public sealed class CountryIndex
             {
                 string type = g.GetProperty("type").GetString() ?? "";
                 var coords = g.GetProperty("coordinates");
-                if (type == "Polygon") AddPolygon(coords, polygons);
-                else if (type == "MultiPolygon") foreach (var poly in coords.EnumerateArray()) AddPolygon(poly, polygons);
+                List<IReadOnlyList<IReadOnlyList<(double Lon, double Lat)>>> parts = type switch
+                {
+                    "Polygon" => [ReadRings(coords)],
+                    "MultiPolygon" => [.. coords.EnumerateArray().Select(ReadRings)],
+                    _ => [],
+                };
+                foreach (var rings in parts)
+                {
+                    if (iso3 == CrimeaFixup.From && CrimeaFixup.IsRegionsPart(rings)) { movedParts++; continue; }
+                    polygons.AddRange(DateLine.SplitPolygon(rings));
+                }
+                if (iso3 == CrimeaFixup.To)
+                {
+                    receivers++;
+                    foreach (var rings in CrimeaFixup.Get().Polygons) polygons.AddRange(DateLine.SplitPolygon(rings));
+                }
             }
             var names = new[] { name, Str(p, "NAME_LONG"), Str(p, "FORMAL_EN"), Str(p, "ADMIN") };
             entries.Add(MakeEntry(new Country(iso3, name, label, polygons), names));
         }
+        // The embedded files are fixed, so a mismatch is a packaging bug: fail loudly rather than show Crimea in Russia.
+        if (movedParts != 1 || receivers != 1)
+            throw new InvalidDataException($"Crimea fix-up: expected 1 {CrimeaFixup.From} part and 1 {CrimeaFixup.To} feature, found {movedParts} and {receivers}");
         var aliases = BuiltInAliases.Select(kv => (Normalize(kv.Key), kv.Value)).ToList();
         return new CountryIndex(entries, aliases);
     }
@@ -171,12 +192,12 @@ public sealed class CountryIndex
     private static Entry MakeEntry(Country c, IReadOnlyList<string> names) =>
         new(c, names, c.Polygons.Select(p => p.Bounds).ToArray());
 
-    private static void AddPolygon(JsonElement rings, List<GeoPolygon> into)
+    private static IReadOnlyList<IReadOnlyList<(double Lon, double Lat)>> ReadRings(JsonElement rings)
     {
         var list = new List<IReadOnlyList<(double Lon, double Lat)>>();
         foreach (var ring in rings.EnumerateArray())
             list.Add(ring.EnumerateArray().Select(pt => (pt[0].GetDouble(), pt[1].GetDouble())).ToList());
-        into.AddRange(DateLine.SplitPolygon(list));
+        return list;
     }
 
     private static string Str(JsonElement p, string key) =>

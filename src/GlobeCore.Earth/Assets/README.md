@@ -9,3 +9,35 @@ Prepared by EarthWatch3D's `tools/prepare-assets.ps1`, which now writes into the
 | `ne_50m_admin_0_boundary_lines_land.geojson` | Natural Earth, `https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_admin_0_boundary_lines_land.geojson` | Public domain |
 | `plate_boundaries.geojson` | Peter Bird (2003), An updated digital model of plate boundaries, G³ 4(3):1027 (PB2002); GIS data by Hugo Ahlenius, Nordpil, `https://raw.githubusercontent.com/fraxen/tectonicplates/master/GeoJSON/PB2002_steps.json`. The 5,824 steps are merged into polylines by kind and simplified to 0.01° | ODC Attribution 1.0 (ODC-By): credit Bird (2003) and Hugo Ahlenius, Nordpil |
 | `ne_50m_admin_0_countries.geojson` | Natural Earth 5.1.2 admin-0 countries, `https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_50m_admin_0_countries.geojson` (unmodified, 3,083,490 bytes, SHA-256 `3e458fc036ad0a66411f2c1e6cac49c5d7bfb81cb1123bc513b22511a2b7fdeb`). Read by `CountryIndex` | Public domain |
+| `ne_50m_admin_1_crimea_sevastopol.geojson` | Natural Earth 5.1.2 admin-1 states and provinces (1:50m), `https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_50m_admin_1_states_provinces.geojson` (2,325,694 bytes, SHA-256 `69a0e06e640b2d505858ae1cb63034e4677f3000b35a98e16312932b98c426b9`). Extract: the two features with `iso_3166_2` UA-43 (Crimea) and UA-40 (Sevastopol), geometry unchanged, properties cut to `name, name_en, iso_3166_2, adm0_a3, admin, type_en, ne_id` (2,536 bytes, SHA-256 `78984719dd109caa4191b0308edac92dd8aed63a5d13309e982e1da4e216a76b`). Read by `CrimeaFixup` | Public domain |
+
+## Crimea and Sevastopol (UN practice)
+
+`CountryIndex.LoadNaturalEarth` and `NaturalEarthLines.LandBoundaries` show Crimea and Sevastopol as part of Ukraine,
+as the United Nations does (UN General Assembly resolution 68/262 of 27 March 2014, "Territorial integrity of Ukraine";
+EarthRelief3D ruling R15). Natural Earth's default admin-0 file draws them inside Russia.
+
+Natural Earth 5.1.2's point-of-view (POV) variants were checked first and not used:
+
+- They exist only at 1:10m (`10m_cultural/ne_10m_admin_0_countries_<pov>.shp`); there is no 1:50m POV file at tag
+  v5.1.2 (the `50m_cultural` and `geojson` folders hold only the default countries files).
+- The Ukrainian POV (`ne_10m_admin_0_countries_ukr`, .shp SHA-256 `ec923b81a27e36efce7bb293c45ce87134f967330ef137d04e1be9c4940b6d82`)
+  differs from the default 10m file (.shp SHA-256 `7ce119ef6342e43cff7c0c3004e0911ab7ec1988a14734372031d2012180e7bc`)
+  far beyond Crimea. Geometry differs for 17 ADM0_A3 units: BRA, CHN, COL, CYP, GRL, IND, ISR, KAZ, KOR, LBN, MAR,
+  RUS, SAH, SDN, SOM, SRB, UKR; and 9 units are absent (merged into others): BJN, CNM, CYN, KAB, KAS, KOS, SER, SOL, SPI.
+  The ISO POV (`_iso`) differs in 35 units and drops 19. Several of these are one government's view, not UN practice.
+
+So the default 1:50m file stays unmodified and a fix-up is applied as it is read:
+
+1. The union of Natural Earth's own 1:50m admin-1 polygons for Crimea and Sevastopol (the extract above) is exactly
+   one part of Russia's admin-0 multipolygon in `ne_50m_admin_0_countries.geojson` (the last of its 101 parts): all 72 of that
+   part's vertices are vertices of the two admin-1 polygons, and the planar areas agree (3.10178 square degrees against
+   3.02459 + 0.07718). That part is dropped from RUS, and the two admin-1 polygons are added to UKR.
+2. On the land-boundary lines, the one line all of whose 15 points are vertices of the Crimea polygon (the Perekop
+   isthmus, `FEATURECLA` "Disputed (please verify)", `NE_ID` 1746708787; Natural Earth's own Ukrainian view, `FCLASS_UA`,
+   classes it "Admin-1 boundary") is left out. The Kerch Strait line (`FCLASS_UA` "International boundary (verify)")
+   stays.
+
+Both steps throw `InvalidDataException` if the files no longer match (not exactly one part, feature or line), so a
+changed asset cannot silently put Crimea back in Russia. Tests: `CountryIndexTests.CrimeaAndSevastopolAreUkraine`,
+`.CrimeaFixupMovesExactlyNaturalEarthsAdmin1Polygons`, `EarthAssetsTests.LandBoundariesHaveNoLineBetweenCrimeaAndUkraine`.

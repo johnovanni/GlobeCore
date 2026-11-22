@@ -66,6 +66,14 @@ lines. Public domain.
 Natural Earth 5.1.2 admin-0 countries (1:50m), used by GlobeCore.Earth.CountryIndex. Public domain.
 Source: https://github.com/nvkelso/natural-earth-vector (tag v5.1.2).
 
+Natural Earth 5.1.2 admin-1 states and provinces (1:50m): the Crimea (UA-43) and Sevastopol
+(UA-40) polygons, extracted unchanged into ne_50m_admin_1_crimea_sevastopol.geojson and used to
+show them as part of Ukraine, as on UN maps (UN General Assembly resolution 68/262). Public domain.
+Source: https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_50m_admin_1_states_provinces.geojson
+(SHA-256 69a0e06e640b2d505858ae1cb63034e4677f3000b35a98e16312932b98c426b9; the extract's SHA-256 is
+78984719dd109caa4191b0308edac92dd8aed63a5d13309e982e1da4e216a76b). The method is in
+src/GlobeCore.Earth/Assets/README.md.
+
 --------------------------------------------------------------------------------
 Cloud imagery: NASA GIBS
 --------------------------------------------------------------------------------
