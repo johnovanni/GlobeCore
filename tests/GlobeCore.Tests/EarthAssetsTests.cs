@@ -15,7 +15,8 @@ public class EarthAssetsTests
     public void EveryNamedAssetExists()
     {
         Assert.Equal(["bluemarble-8192.jpg", "ne_50m_coastline.geojson", "ne_50m_admin_0_boundary_lines_land.geojson",
-                      "plate_boundaries.geojson"], EarthAssets.Names);
+                      "plate_boundaries.geojson", "ne_50m_admin_0_countries.geojson", "ne_50m_admin_1_crimea_sevastopol.geojson"],
+                     EarthAssets.Names);
         foreach (var name in EarthAssets.Names)
         {
             using var s = EarthAssets.Open(name);
@@ -84,11 +85,32 @@ public class EarthAssetsTests
     public void NaturalEarthLinesReadTheEmbeddedFiles()
     {
         var coast = NaturalEarthLines.Coastlines();
-        var borders = NaturalEarthLines.LandBoundaries();
+        var borders = NaturalEarthLines.LandBoundaries(RegionTestData.CrimeaSet);
         Assert.True(coast.Count > 1000);
         Assert.True(borders.Count > 100);
         using var s = EarthAssets.Open("ne_50m_admin_0_boundary_lines_land.geojson");
-        Assert.Equal(GeoJsonLines.Read(s).Count, borders.Count);
+        Assert.Equal(GeoJsonLines.Read(s).Count - 1, borders.Count);   // less the Perekop line (Crimea is Ukraine's)
+    }
+
+    [Fact]
+    public void LandBoundariesHaveNoLineBetweenCrimeaAndUkraine()
+    {
+        // The Perekop isthmus line runs from about (46.10, 33.59) to (45.73, 35.00); no border line may cross the isthmus.
+        var borders = NaturalEarthLines.LandBoundaries(RegionTestData.CrimeaSet);
+        Assert.DoesNotContain(borders, l => l.Any(p => p.LatitudeDeg is > 45.7 and < 46.2 && p.LongitudeDeg is > 33.5 and < 35.1));
+        // The Kerch Strait line (Ukraine-Russia) stays.
+        Assert.Contains(borders, l => l.Any(p => p.LatitudeDeg is > 44.9 and < 45.7 && p.LongitudeDeg is > 36.5 and < 36.8));
+    }
+
+    [Fact]
+    public void LandBoundariesComeFromABoundarySet()
+    {
+        var set = NaturalEarthBoundaries.LoadBundled(GlobeCore.Regions.BoundaryRules.None);
+        var all = NaturalEarthLines.LandBoundaries(set);
+        using var s = EarthAssets.Open("ne_50m_admin_0_boundary_lines_land.geojson");
+        Assert.Equal(GeoJsonLines.Read(s).Count, all.Count);   // no rules: Natural Earth's lines as they are
+        using var rules = RegionTestData.Json("{\"rules\": [" + BoundaryRulesTests.CrimeaRule + "]}");
+        Assert.Equal(NaturalEarthLines.LandBoundaries(RegionTestData.CrimeaSet).Select(l => l.ToList()), NaturalEarthLines.LandBoundaries(rules).Select(l => l.ToList()));
     }
 
     [Fact]

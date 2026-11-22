@@ -13,12 +13,18 @@ public static class EarthAssets
     public const string BlueMarbleFile = "bluemarble-8192.jpg";
     public const string CoastlineFile = "ne_50m_coastline.geojson";
     public const string LandBoundariesFile = "ne_50m_admin_0_boundary_lines_land.geojson";
+    public const string CountriesFile = "ne_50m_admin_0_countries.geojson";
     public const string PlateBoundariesFile = "plate_boundaries.geojson";
+    /// <summary>
+    /// Natural Earth 5.1.2's admin-1 polygons of Crimea and Sevastopol (an extract): the bundled set's admin-1 file, which
+    /// a <c>moveAdmin1</c> rule uses to show them as part of Ukraine (UN practice). See <see cref="NaturalEarthBoundaries"/>.
+    /// </summary>
+    public const string CrimeaRegionsFile = "ne_50m_admin_1_crimea_sevastopol.geojson";
 
     private const string Prefix = "GlobeCore.Earth.Assets.";
 
     /// <summary>Every embedded asset's file name.</summary>
-    public static IReadOnlyList<string> Names { get; } = [BlueMarbleFile, CoastlineFile, LandBoundariesFile, PlateBoundariesFile];
+    public static IReadOnlyList<string> Names { get; } = [BlueMarbleFile, CoastlineFile, LandBoundariesFile, PlateBoundariesFile, CountriesFile, CrimeaRegionsFile];
 
     /// <summary>Opens an embedded asset by file name. The caller disposes the stream.</summary>
     public static Stream Open(string fileName) =>

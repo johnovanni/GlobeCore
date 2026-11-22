@@ -11,6 +11,11 @@ namespace GlobeCore.Feeds;
 public sealed class FeedAuthException(HttpStatusCode status)
     : HttpRequestException($"HTTP {(int)status}: access denied", null, status);
 
+/// <summary>The outcome of <see cref="FeedHttp.GetConditionalAsync"/>.</summary>
+/// <param name="NotModified">The server answered 304: the caller's copy is current, and <see cref="Body"/> is empty.</param>
+/// <param name="ETag">The response's ETag header (with its quotes), if any.</param>
+public sealed record ConditionalResponse(bool NotModified, byte[] Body, string? ETag);
+
 /// <summary>
 /// Shared HTTP client for all feeds: User-Agent, 30 s timeout (headers and body), gzip/deflate, byte counting.
 /// A caller-supplied handler is owned and disposed by FeedHttp.
@@ -41,6 +46,22 @@ public sealed class FeedHttp : IDisposable
     public Task<byte[]> GetBytesAsync(Uri u, CancellationToken ct, AuthenticationHeaderValue? auth)
         => SendAsync(u, () => NewRequest(HttpMethod.Get, u, auth), ct);
 
+    /// <summary>
+    /// GETs with <c>If-None-Match: etag</c> when an ETag is given. A 304 answer is returned as
+    /// <see cref="ConditionalResponse.NotModified"/>; every other non-success status throws like <see cref="GetBytesAsync(Uri, CancellationToken)"/>
+    /// (<see cref="FeedAuthException"/> for 401 and 403, otherwise <see cref="HttpRequestException"/> with its StatusCode).
+    /// </summary>
+    public async Task<ConditionalResponse> GetConditionalAsync(Uri u, string? etag, CancellationToken ct)
+    {
+        var raw = await SendRawAsync(u, () =>
+        {
+            var req = NewRequest(HttpMethod.Get, u, null);
+            if (!string.IsNullOrEmpty(etag)) req.Headers.TryAddWithoutValidation("If-None-Match", etag);
+            return req;
+        }, ct, allowNotModified: !string.IsNullOrEmpty(etag)).ConfigureAwait(false);
+        return new ConditionalResponse(raw.NotModified, raw.Body, raw.ETag);
+    }
+
     /// <summary>POSTs an application/x-www-form-urlencoded body and returns the response text.</summary>
     public async Task<string> PostFormAsync(Uri u, IReadOnlyDictionary<string, string> form,
         AuthenticationHeaderValue? auth, CancellationToken ct)
@@ -65,13 +86,18 @@ public sealed class FeedHttp : IDisposable
     }
 
     private async Task<byte[]> SendAsync(Uri u, Func<HttpRequestMessage> makeRequest, CancellationToken ct)
+        => (await SendRawAsync(u, makeRequest, ct, allowNotModified: false).ConfigureAwait(false)).Body;
+
+    private sealed record RawResponse(bool NotModified, byte[] Body, string? ETag);
+
+    private async Task<RawResponse> SendRawAsync(Uri u, Func<HttpRequestMessage> makeRequest, CancellationToken ct, bool allowNotModified)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(_timeout);
         try
         {
             using var req = makeRequest();
-            return await ReadAsync(req, cts.Token).ConfigureAwait(false);
+            return await ReadAsync(req, cts.Token, allowNotModified).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
@@ -79,9 +105,11 @@ public sealed class FeedHttp : IDisposable
         }
     }
 
-    private async Task<byte[]> ReadAsync(HttpRequestMessage req, CancellationToken ct)
+    private async Task<RawResponse> ReadAsync(HttpRequestMessage req, CancellationToken ct, bool allowNotModified)
     {
         using var resp = await _client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        if (allowNotModified && resp.StatusCode == HttpStatusCode.NotModified)
+            return new RawResponse(true, [], resp.Headers.ETag?.ToString());
         if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             throw new FeedAuthException(resp.StatusCode);
         resp.EnsureSuccessStatusCode();
@@ -97,7 +125,7 @@ public sealed class FeedHttp : IDisposable
             if (ms.Length + n > _maxBytes) throw new HttpRequestException($"response larger than {_maxBytes / (1024.0 * 1024):0.###} MB");
             ms.Write(buf, 0, n);
         }
-        return ms.ToArray();
+        return new RawResponse(false, ms.ToArray(), resp.Headers.ETag?.ToString());
     }
 
     private static Stream Decoded(Stream wire, ICollection<string> encodings)
