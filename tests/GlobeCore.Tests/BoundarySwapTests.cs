@@ -78,4 +78,24 @@ public class BoundarySwapTests
         Assert.Equal("Test Atlas 1.0.0 (2020-01-02); Peninsula shown as part of Beta", set.Describe());
         Assert.Equal("Test Atlas 1.0.0 (2020-01-02)", BoundaryRules.None.Apply(Sample()).Describe());
     }
+
+    [Fact]
+    // Review item (b): one handler failing neither stops the others nor escapes Swap.
+    public void AThrowingChangedHandlerDoesNotStopTheOthersOrEscape()
+    {
+        var log = new RecordingLog();
+        var current = new CurrentBoundaries(Generation(0), log);
+        var called = new List<string>();
+        current.Changed += (_, _) => called.Add("first");
+        current.Changed += (_, _) => throw new InvalidOperationException("handler broke");
+        current.Changed += (_, _) => called.Add("third");
+
+        var next = Generation(1);
+        var old = current.Swap(next);   // does not throw
+
+        Assert.Equal(["first", "third"], called);
+        Assert.Same(next, current.Set);
+        Assert.Equal("v0", old.Tag);
+        Assert.Contains(log.Warnings, m => m.Contains("Changed handler", StringComparison.Ordinal));
+    }
 }

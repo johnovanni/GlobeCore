@@ -119,3 +119,11 @@ match (not exactly one part, admin-1 feature or line), so a changed or updated f
 Russia. Tests: `BoundaryRulesTests.CrimeaRuleMovesAdmin1AndDropsPerekop`, `.MismatchedRuleRejectsTheSet`,
 `CountryIndexTests.CrimeaAndSevastopolAreUkraine`, `.CrimeaRuleMovesExactlyNaturalEarthsAdmin1Polygons`,
 `EarthAssetsTests.LandBoundariesHaveNoLineBetweenCrimeaAndUkraine`.
+
+## Updates (Natural Earth releases)
+
+`BoundaryUpdateFeed` (feed "Borders", every 24 h) with `NaturalEarthBoundarySource` asks the GitHub API for the latest
+release of `nvkelso/natural-earth-vector` (ETag-aware). Only a newer tag downloads the three `geojson/` files
+(`ne_50m_admin_0_countries`, `ne_50m_admin_0_boundary_lines_land`, and the **full** `ne_50m_admin_1_states_provinces`),
+applies the app's rules, validates, stores the set under `<data>/cache/boundaries/<tag>/` and swaps it into
+`CurrentBoundaries`. A rejected release leaves the current set in place and shows the "Borders" dot amber with the reason.

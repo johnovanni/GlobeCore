@@ -195,6 +195,6 @@ public sealed partial class BoundaryStore(string cacheDir)
     }
 
     // One path segment: no separators, and not "." or "..".
-    [GeneratedRegex(@"^(?!\.{1,2}$)[A-Za-z0-9._-]{1,100}$")]
+    [GeneratedRegex(@"^(?!\.{1,2}$)[A-Za-z0-9._-]{1,100}\z")]
     private static partial Regex SafeName();
 }

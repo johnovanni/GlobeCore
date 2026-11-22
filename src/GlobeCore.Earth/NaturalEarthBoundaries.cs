@@ -40,7 +40,7 @@ public static class NaturalEarthBoundaries
     /// <c>boundary-rules.json</c> (Plan 2b, Tasks 3 and 4). Then those callers move to the overloads that take the app's
     /// rules, and this default goes. New code should not depend on it.
     /// </summary>
-    public const string TransitionalDefaultRulesJson = """
+    internal const string TransitionalDefaultRulesJson = """
         {
           "rules": [
             {
@@ -67,7 +67,7 @@ public static class NaturalEarthBoundaries
     private static readonly Lazy<BoundarySet> TransitionalSet = new(() => LoadBundled(TransitionalRules.Value));
 
     /// <summary>TRANSITIONAL: <see cref="TransitionalDefaultRulesJson"/>, parsed.</summary>
-    public static BoundaryRules TransitionalDefaultRules => TransitionalRules.Value;
+    internal static BoundaryRules TransitionalDefaultRules => TransitionalRules.Value;
 
     /// <summary>TRANSITIONAL: the bundled set with <see cref="TransitionalDefaultRules"/>, read once and shared.</summary>
     internal static BoundarySet TransitionalDefaultSet => TransitionalSet.Value;
@@ -144,9 +144,10 @@ public static class NaturalEarthBoundaries
     {
         try
         {
-            var regions = ReadCountries(countries);
+            var idOfAdm0 = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var regions = ReadCountries(countries, idOfAdm0);
             var boundaryLines = GeoJsonLines.Read(lines);
-            var subdivisions = ReadAdmin1(admin1);
+            var subdivisions = ReadAdmin1(admin1, idOfAdm0);
             if (regions.Count == 0) throw new InvalidDataException("no countries");
             return new RawBoundaryData(tag, EditionName(tag, date), date, regions, boundaryLines, subdivisions) { Aliases = BuiltInAliases };
         }
@@ -156,15 +157,24 @@ public static class NaturalEarthBoundaries
         }
     }
 
-    private static List<RawRegion> ReadCountries(Stream s)
+    // The region id of a Natural Earth country feature: ISO_A3_EH, or ADM0_A3 where that is missing or -99.
+    private static string RegionId(JsonElement p)
+    {
+        string iso3 = Str(p, "ISO_A3_EH");
+        return iso3.Length == 0 || iso3 == "-99" ? Str(p, "ADM0_A3") : iso3;
+    }
+
+    private static List<RawRegion> ReadCountries(Stream s, Dictionary<string, string> idOfAdm0)
     {
         using var doc = JsonDocument.Parse(s);
         var regions = new List<RawRegion>();
         foreach (var f in doc.RootElement.GetProperty("features").EnumerateArray())
         {
             var p = f.GetProperty("properties");
-            string iso3 = Str(p, "ISO_A3_EH");
-            if (iso3.Length == 0 || iso3 == "-99") iso3 = Str(p, "ADM0_A3");
+            string iso3 = RegionId(p);
+            // First feature wins when two countries share an ADM0_A3 (none do in 5.1.2).
+            string adm0 = Str(p, "ADM0_A3");
+            if (adm0.Length > 0) idOfAdm0.TryAdd(adm0, iso3);
             string[] other = [.. new[] { Str(p, "NAME_LONG"), Str(p, "FORMAL_EN"), Str(p, "ADMIN") }.Where(n => n.Length > 0)];
             var label = new GeoPosition(Num(p, "LABEL_Y"), Num(p, "LABEL_X"));
             regions.Add(new RawRegion(iso3, Str(p, "NAME"), other, label, ReadParts(f)));
@@ -172,7 +182,9 @@ public static class NaturalEarthBoundaries
         return regions;
     }
 
-    private static List<RawSubdivision> ReadAdmin1(Stream s)
+    // A subdivision's parent is named by its feature's adm0_a3, which is ADM0_A3, not the region id: South Sudan is SDS
+    // there and SSD (ISO_A3_EH) as a region. So the parent id goes through the countries file's own ADM0_A3 to id mapping.
+    private static List<RawSubdivision> ReadAdmin1(Stream s, IReadOnlyDictionary<string, string> idOfAdm0)
     {
         using var doc = JsonDocument.Parse(s);
         var list = new List<RawSubdivision>();
@@ -181,7 +193,8 @@ public static class NaturalEarthBoundaries
             var p = f.GetProperty("properties");
             var parts = ReadParts(f);
             if (parts.Count == 0) continue;
-            list.Add(new RawSubdivision(Str(p, "iso_3166_2"), Str(p, "adm0_a3"), Str(p, "name"), parts));
+            string adm0 = Str(p, "adm0_a3");
+            list.Add(new RawSubdivision(Str(p, "iso_3166_2"), idOfAdm0.GetValueOrDefault(adm0, adm0), Str(p, "name"), parts));
         }
         return list;
     }

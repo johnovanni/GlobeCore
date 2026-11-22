@@ -126,7 +126,7 @@ public sealed class FeedScheduler : IDisposable
                         "Daily download limit reached");
                     break;
                 default:
-                    status = new FeedStatus(slot.Feed.Name, FeedState.Ok, now, null, 0, next);
+                    status = new FeedStatus(slot.Feed.Name, FeedState.Ok, now, null, 0, next, NoteOf(slot.Feed));
                     break;
             }
         }
@@ -144,11 +144,23 @@ public sealed class FeedScheduler : IDisposable
             lock (_gate) { failures = slot.Status.ConsecutiveFailures + 1; lastOk = slot.Status.LastSuccessUtc; }
             _log.Warn(slot.Feed.Name + ": " + ex.Message, ex);
             status = new FeedStatus(slot.Feed.Name, failures >= 3 ? FeedState.Failing : FeedState.Retrying,
-                lastOk, ex.Message, failures, now + Backoff.Delay(failures));
+                lastOk, ex.Message, failures, now + Backoff.Delay(failures), NoteOf(slot.Feed));
         }
         lock (_gate) { slot.Status = status; slot.EndRun(); }
         try { StatusChanged?.Invoke(this, status); }
         catch (Exception ex) { _log.Warn("StatusChanged handler failed", ex); }
+    }
+
+    // A feed's own tooltip line, if it has one. A broken getter must not turn a finished run into a failure.
+    private string? NoteOf(IFeed feed)
+    {
+        if (feed is not IFeedStatusNote n) return null;
+        try { return n.StatusNote; }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _log.Warn(feed.Name + ": status note failed", ex);
+            return null;
+        }
     }
 
     public void Start()

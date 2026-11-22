@@ -154,6 +154,7 @@ public sealed class BoundaryStoreTests : IDisposable
     [InlineData("v5/../x")]
     [InlineData("")]
     [InlineData("v5.2.0\\x")]
+    [InlineData("v5.2.0\n")]   // `$` would let a trailing newline through; the pattern ends with \z
     public void UnsafeTagsAndFileNamesAreRefused(string bad)
     {
         var store = new BoundaryStore(_dir);

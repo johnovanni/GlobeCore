@@ -19,3 +19,12 @@ public interface IFeed
     TimeSpan Interval { get; }
     Task<FeedRunResult> RunOnceAsync(CancellationToken ct);
 }
+
+/// <summary>
+/// A feed that has its own line for the status tooltip, such as "Using Natural Earth 5.1.2 (2022-05-13); no newer release".
+/// <see cref="FeedScheduler"/> reads it after every run that ended OK or failed.
+/// </summary>
+public interface IFeedStatusNote
+{
+    string? StatusNote { get; }
+}
