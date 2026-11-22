@@ -151,8 +151,8 @@ public static class NaturalEarthBoundaries
             if (regions.Count == 0) throw new InvalidDataException("no countries");
             return new RawBoundaryData(tag, EditionName(tag, date), date, regions, boundaryLines, subdivisions) { Aliases = BuiltInAliases };
         }
-        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException or IndexOutOfRangeException or FormatException)
-        {
+        catch (Exception ex) when (ex is not (InvalidDataException or OutOfMemoryException))
+        {   // any parse failure of a downloaded file means the file is not usable
             throw new InvalidDataException($"Natural Earth {tag}: not the GeoJSON expected ({ex.Message})", ex);
         }
     }

@@ -9,11 +9,12 @@ namespace GlobeCore.Wpf.Status;
 /// <summary>One status dot. <see cref="Brush"/> is frozen.</summary>
 public sealed record StatusDot(string Name, FeedState State, string Tooltip, Brush Brush);
 
-/// <summary>Ok green, Retrying amber, Failing red, Paused blue, NotSetUp / NotStarted / Idle grey.</summary>
+/// <summary>Ok green, Retrying and Attention amber, Failing red, Paused blue, NotSetUp / NotStarted / Idle grey.</summary>
 public static class StatusDotsBrushes
 {
     public static readonly SolidColorBrush Ok = Frozen(0x34, 0xC7, 0x59);
     public static readonly SolidColorBrush Retrying = Frozen(0xFF, 0xCC, 0x00);
+    public static readonly SolidColorBrush Attention = Retrying;
     public static readonly SolidColorBrush Failing = Frozen(0xFF, 0x3B, 0x30);
     public static readonly SolidColorBrush Paused = Frozen(0x0A, 0x84, 0xFF);
     public static readonly SolidColorBrush Idle = Frozen(0x8E, 0x8E, 0x93);
@@ -23,6 +24,7 @@ public static class StatusDotsBrushes
         FeedState.Ok => Ok,
         FeedState.Retrying => Retrying,
         FeedState.Failing => Failing,
+        FeedState.Attention => Attention,
         FeedState.Paused => Paused,
         _ => Idle,   // NotStarted, NotSetUp and Idle (not polled right now) are grey
     };
@@ -98,6 +100,7 @@ public sealed class StatusDotsViewModel(IEnumerable<string> sourceNames, Dispatc
             FeedState.Retrying or FeedState.Failing =>
                 s.Name + (s.State == FeedState.Retrying ? ": retrying" : ": failing") + error +
                 " – next try " + Utc(s.NextRunUtc) + (lastOk.Length > 0 ? "; last updated " + lastOk : ""),
+            FeedState.Attention => s.Name + ": needs attention" + (lastOk.Length > 0 ? "; last updated " + lastOk : ""),
             FeedState.NotSetUp => s.Name + ": not set up",
             FeedState.Paused => s.Name + ": paused",
             FeedState.Idle => s.Name + ": idle" + (lastOk.Length > 0 ? "; last updated " + lastOk : ""),

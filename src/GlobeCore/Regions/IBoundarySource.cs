@@ -5,6 +5,12 @@ namespace GlobeCore.Regions;
 /// <param name="ETag">The ETag of the "latest release" answer (with its quotes), to send back as If-None-Match; null if the server gave none.</param>
 public sealed record ReleaseInfo(string Tag, DateOnly Date, string? ETag = null);
 
+/// <summary>The latest release cannot be used as it is described (for example its tag is not a version); the feed rejects it.</summary>
+public sealed class ReleaseNotUsableException(string tag, string reason) : Exception(reason)
+{
+    public string Tag { get; } = tag;
+}
+
 /// <summary>
 /// Where a body's boundary sets come from (for Earth, the GitHub releases of Natural Earth:
 /// <c>GlobeCore.Earth.NaturalEarthBoundarySource</c>). A Moon app plugs in its own. Network failures are thrown (the feed

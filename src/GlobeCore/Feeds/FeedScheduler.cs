@@ -121,6 +121,10 @@ public sealed class FeedScheduler : IDisposable
                 case FeedRunResult.NotSetUp:
                     status = new FeedStatus(slot.Feed.Name, FeedState.NotSetUp, before.LastSuccessUtc, null, 0, next);
                     break;
+                case FeedRunResult.Attention:
+                    // Ran and kept the current data, but the owner should look: amber, not a failure, normal interval.
+                    status = new FeedStatus(slot.Feed.Name, FeedState.Attention, before.LastSuccessUtc, null, 0, next, NoteOf(slot.Feed));
+                    break;
                 case FeedRunResult.Paused:
                     status = new FeedStatus(slot.Feed.Name, FeedState.Paused, before.LastSuccessUtc, null, 0, next,
                         "Daily download limit reached");

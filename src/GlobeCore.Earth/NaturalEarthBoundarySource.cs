@@ -42,7 +42,7 @@ public sealed partial class NaturalEarthBoundarySource(FeedHttp http) : IBoundar
             using var doc = JsonDocument.Parse(response.Body);
             var root = doc.RootElement;
             var tag = root.GetProperty("tag_name").GetString() ?? "";
-            if (!ReleaseTag().IsMatch(tag)) throw new InvalidDataException($"unexpected release tag \"{Shorten(tag)}\"");
+            if (!ReleaseTag().IsMatch(tag)) throw new ReleaseNotUsableException(Shorten(tag), $"tag not understood: {Shorten(tag)}");
             var published = DateTimeOffset.Parse(root.GetProperty("published_at").GetString() ?? "", CultureInfo.InvariantCulture,
                 DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
             return new ReleaseInfo(tag, DateOnly.FromDateTime(published.UtcDateTime), response.ETag);

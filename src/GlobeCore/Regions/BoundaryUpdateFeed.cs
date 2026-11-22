@@ -4,19 +4,12 @@ using GlobeCore.Logging;
 namespace GlobeCore.Regions;
 
 /// <summary>
-/// A release was downloaded but is not usable (a file is missing, truncated or not the expected format, a rule no longer
-/// matches, or validation failed). The message reads "Rejected v5.2.0: &lt;reason&gt;". The feed throws it so that the
-/// scheduler shows the "Borders" dot amber with that reason; the current set stays in use.
-/// </summary>
-public sealed class BoundaryRejectedException(string message) : Exception(message);
-
-/// <summary>
 /// Checks once a day for a newer release of the body's boundary data and adopts it when it is whole and valid:
 /// <list type="number">
 /// <item>asks the source for the latest release (an unchanged ETag answers "nothing new" without a body);</item>
 /// <item>only when its tag is newer than the tag of <see cref="CurrentBoundaries.Set"/>, downloads the files;</item>
 /// <item>applies the rules and validates with <see cref="BoundaryValidator"/>; a failure throws
-/// <see cref="BoundaryRejectedException"/> and changes nothing (the release is then not downloaded again until a newer one appears);</item>
+/// a rejection (<see cref="FeedRunResult.Attention"/>: the dot goes amber with "Rejected v5.2.0: reason" as its note, on the normal interval) and changes nothing (the release is then not downloaded again until a newer one appears);</item>
 /// <item>stores the set in the <see cref="BoundaryStore"/>, swaps it into <see cref="CurrentBoundaries"/> (raising its
 /// Changed event) and logs the ids of the regions whose shapes changed.</item>
 /// </list>
@@ -52,6 +45,7 @@ public sealed class BoundaryUpdateFeed : IFeed, IFeedStatusNote
         _log = log ?? throw new ArgumentNullException(nameof(log));
         _meter = meter;
         _note = UsingNote(current.Set, "");
+        LoadPersistedRejection(current.Set);
     }
 
     public string Name => "Borders";
@@ -67,13 +61,21 @@ public sealed class BoundaryUpdateFeed : IFeed, IFeedStatusNote
 
         string? etag;
         lock (_gate) etag = _etag;
-        var latest = await _source.LatestAsync(etag, ct).ConfigureAwait(false);
+        ReleaseInfo? latest;
+        try
+        {
+            latest = await _source.LatestAsync(etag, ct).ConfigureAwait(false);
+        }
+        catch (ReleaseNotUsableException ex)
+        {
+            return Reject(new ReleaseInfo(ex.Tag, default), _current.Set, ex.Message);
+        }
         var inUse = _current.Set;
 
         if (latest is null)
         {
             // Nothing changed since the last answer, so whatever was decided about it still stands.
-            ThrowIfRejected(inUse, null);
+            if (AlreadyRejected(inUse, null)) return FeedRunResult.Attention;
             SetNote(UsingNote(inUse, "; no newer release"));
             return FeedRunResult.Ok;
         }
@@ -81,16 +83,17 @@ public sealed class BoundaryUpdateFeed : IFeed, IFeedStatusNote
         if (BoundaryStore.CompareTags(latest.Tag, inUse.Tag) <= 0)
         {
             lock (_gate) { _etag = latest.ETag; _rejectedTag = null; _rejection = null; }
+            ClearPersistedRejection();
             SetNote(UsingNote(inUse, "; no newer release"));
             return FeedRunResult.Ok;
         }
 
-        // The same release that was rejected before: do not download it again.
-        lock (_gate)
+        // The same release that was rejected before (maybe in an earlier session): do not download it again.
+        if (AlreadyRejected(inUse, latest.Tag))
         {
-            if (_rejectedTag == latest.Tag) _etag = latest.ETag;
+            lock (_gate) _etag = latest.ETag;
+            return FeedRunResult.Attention;
         }
-        ThrowIfRejected(inUse, latest.Tag);
 
         RawBoundaryData raw;
         try
@@ -99,11 +102,11 @@ public sealed class BoundaryUpdateFeed : IFeed, IFeedStatusNote
         }
         catch (InvalidDataException ex)
         {
-            throw Reject(latest, inUse, ex.Message);
+            return Reject(latest, inUse, ex.Message);
         }
 
         var result = _validator.Validate(raw, _rules, out var set);
-        if (set is null) throw Reject(latest, inUse, result.Reason);
+        if (set is null) return Reject(latest, inUse, result.Reason);
 
         if (raw.Files.Count > 0 && !_store.Save(latest.Tag, latest.Date, raw.Files, out var error))
             _log.Warn($"Boundaries: could not store {set.Edition}; it is in use for this session only", error);
@@ -115,31 +118,85 @@ public sealed class BoundaryUpdateFeed : IFeed, IFeedStatusNote
                   (changed.Count > 0 ? ": " + string.Join(", ", changed) : ""));
 
         lock (_gate) { _etag = latest.ETag; _rejectedTag = null; _rejection = null; }
+        ClearPersistedRejection();
         SetNote(UsingNote(set, $" (updated from {old.Edition})"));
         return FeedRunResult.Ok;
     }
 
-    // Throws the remembered rejection, for any release (onlyForTag null) or for the one named.
-    private void ThrowIfRejected(BoundarySet inUse, string? onlyForTag)
+    // True (and the note says so) when a rejection is remembered, for any release (onlyForTag null) or for the one named.
+    private bool AlreadyRejected(BoundarySet inUse, string? onlyForTag)
     {
         string? message, tag;
         lock (_gate)
         {
-            if (_rejection is null || (onlyForTag is not null && _rejectedTag != onlyForTag)) return;
+            if (_rejection is null || (onlyForTag is not null && _rejectedTag != onlyForTag)) return false;
             message = _rejection;
             tag = _rejectedTag;
         }
-        SetNote(UsingNote(inUse, $"; kept after rejecting {tag}"));
-        throw new BoundaryRejectedException(message);
+        SetNote(RejectedNote(inUse, tag, message));
+        return true;
     }
 
-    private BoundaryRejectedException Reject(ReleaseInfo release, BoundarySet inUse, string reason)
+    // Remembers the rejection (in memory and next to the store, so a restart does not download the release again) and
+    // asks for attention: the dot goes amber on the feed's normal interval, which is not a failure.
+    private FeedRunResult Reject(ReleaseInfo release, BoundarySet inUse, string reason)
     {
         var message = $"Rejected {release.Tag}: {reason}";
-        lock (_gate) { _rejectedTag = release.Tag; _rejection = message; _etag = release.ETag; }
-        SetNote(UsingNote(inUse, $"; kept after rejecting {release.Tag}"));
-        _log.Warn(message);
-        return new BoundaryRejectedException(message);
+        bool isNew;
+        lock (_gate)
+        {
+            isNew = _rejectedTag != release.Tag || _rejection != message;
+            _rejectedTag = release.Tag; _rejection = message; _etag = release.ETag;
+        }
+        SetNote(RejectedNote(inUse, release.Tag, message));
+        if (isNew)
+        {
+            _log.Warn(message);
+            PersistRejection(release.Tag, message);
+        }
+        return FeedRunResult.Attention;
+    }
+
+    private static string RejectedNote(BoundarySet inUse, string? tag, string? message) =>
+        $"{message}. Using {inUse.Edition}; kept ({tag} not adopted)";
+
+    private string RejectionFile => Path.Combine(_store.CacheDir, "rejected.json");
+
+    private void LoadPersistedRejection(BoundarySet inUse)
+    {
+        try
+        {
+            if (!File.Exists(RejectionFile)) return;
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(RejectionFile));
+            var tag = doc.RootElement.GetProperty("tag").GetString();
+            var reason = doc.RootElement.GetProperty("reason").GetString();
+            // Only a release still newer than the set in use matters; anything older is history.
+            if (string.IsNullOrEmpty(tag) || string.IsNullOrEmpty(reason) || BoundaryStore.CompareTags(tag, inUse.Tag) <= 0) return;
+            _rejectedTag = tag;
+            _rejection = reason;
+            _note = RejectedNote(inUse, tag, reason);
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or IOException or UnauthorizedAccessException
+                                       or KeyNotFoundException or InvalidOperationException)
+        {
+            _log.Warn("Boundaries: the remembered rejection is unreadable and was ignored", ex);
+        }
+    }
+
+    private void PersistRejection(string tag, string reason)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new { tag, reason });
+        if (!Storage.AtomicFile.TryWriteAllText(RejectionFile, json, out var error))
+            _log.Warn("Boundaries: could not remember the rejection", error);
+    }
+
+    private void ClearPersistedRejection()
+    {
+        try { File.Delete(RejectionFile); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _log.Warn("Boundaries: could not clear the remembered rejection", ex);
+        }
     }
 
     private void SetNote(string note) { lock (_gate) _note = note; }

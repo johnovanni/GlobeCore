@@ -144,6 +144,8 @@ public sealed class BoundaryUpdateFeedTests : IDisposable
         return new Rig { Web = web, Http = http, Feed = feed, Current = current, Store = store, Log = log, Initial = initial, Meter = meter };
     }
 
+    private const string RejectedPrefix = "Rejected v5.2.0: ";
+
     [Fact]
     public async Task NoNewerReleaseDownloadsNothing()
     {
@@ -208,8 +210,8 @@ public sealed class BoundaryUpdateFeedTests : IDisposable
         var truncated = Files520.Value[NaturalEarthBoundaries.LinesFile][..5000];
         using var rig = MakeRig(Server(Release520, n => n == NaturalEarthBoundaries.LinesFile ? truncated : Files520.Value.GetValueOrDefault(n)));
 
-        var ex = await Assert.ThrowsAsync<BoundaryRejectedException>(() => rig.Feed.RunOnceAsync(CancellationToken.None));
-        Assert.StartsWith("Rejected v5.2.0: ", ex.Message);
+        Assert.Equal(FeedRunResult.Attention, await rig.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Contains(RejectedPrefix, rig.Feed.StatusNote);
         Assert.Same(rig.Initial, rig.Current.Set);
         Assert.Empty(rig.Store.StoredTags());   // nothing half-stored
         Assert.False(Directory.Exists(Path.Combine(_dir, "boundaries", "v5.2.0")));
@@ -218,8 +220,9 @@ public sealed class BoundaryUpdateFeedTests : IDisposable
 
         // The release is not downloaded again on every retry, and stays rejected (amber) until a newer release appears.
         int raws = rig.Web.RawCount;
-        var again = await Assert.ThrowsAsync<BoundaryRejectedException>(() => rig.Feed.RunOnceAsync(CancellationToken.None));
-        Assert.Equal(ex.Message, again.Message);
+        var note = rig.Feed.StatusNote;
+        Assert.Equal(FeedRunResult.Attention, await rig.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Equal(note, rig.Feed.StatusNote);
         Assert.Equal(raws, rig.Web.RawCount);
     }
 
@@ -228,8 +231,8 @@ public sealed class BoundaryUpdateFeedTests : IDisposable
     {
         var html = Encoding.UTF8.GetBytes("<!DOCTYPE html><html><body>Service temporarily unavailable</body></html>");
         using var rig = MakeRig(Server(Release520, n => n == NaturalEarthBoundaries.CountriesFile ? html : Files520.Value.GetValueOrDefault(n)));
-        var ex = await Assert.ThrowsAsync<BoundaryRejectedException>(() => rig.Feed.RunOnceAsync(CancellationToken.None));
-        Assert.StartsWith("Rejected v5.2.0: ", ex.Message);
+        Assert.Equal(FeedRunResult.Attention, await rig.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Contains(RejectedPrefix, rig.Feed.StatusNote);
         Assert.Same(rig.Initial, rig.Current.Set);
         Assert.Empty(rig.Store.StoredTags());
     }
@@ -238,9 +241,9 @@ public sealed class BoundaryUpdateFeedTests : IDisposable
     public async Task MissingFileRejectsTheWholeSet()
     {
         using var rig = MakeRig(Server(Release520, n => n == NaturalEarthBoundaries.Admin1File ? null : Files520.Value.GetValueOrDefault(n)));
-        var ex = await Assert.ThrowsAsync<BoundaryRejectedException>(() => rig.Feed.RunOnceAsync(CancellationToken.None));
-        Assert.StartsWith("Rejected v5.2.0: ", ex.Message);
-        Assert.Contains(NaturalEarthBoundaries.Admin1File, ex.Message);
+        Assert.Equal(FeedRunResult.Attention, await rig.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Contains(RejectedPrefix, rig.Feed.StatusNote);
+        Assert.Contains(NaturalEarthBoundaries.Admin1File, rig.Feed.StatusNote);
         Assert.Same(rig.Initial, rig.Current.Set);
         Assert.Empty(rig.Store.StoredTags());
     }
@@ -254,9 +257,9 @@ public sealed class BoundaryUpdateFeedTests : IDisposable
         features.Remove(features.Single(f => (string?)f!["properties"]!["ISO_A3_EH"] == "SDN"));
         var bad = Encoding.UTF8.GetBytes(countries.ToJsonString());
         using var rig = MakeRig(Server(Release520, n => n == NaturalEarthBoundaries.CountriesFile ? bad : Files520.Value.GetValueOrDefault(n)));
-        var ex = await Assert.ThrowsAsync<BoundaryRejectedException>(() => rig.Feed.RunOnceAsync(CancellationToken.None));
-        Assert.StartsWith("Rejected v5.2.0: ", ex.Message);
-        Assert.Contains("SDN", ex.Message);
+        Assert.Equal(FeedRunResult.Attention, await rig.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Contains(RejectedPrefix, rig.Feed.StatusNote);
+        Assert.Contains("SDN", rig.Feed.StatusNote);
         Assert.Same(rig.Initial, rig.Current.Set);
         Assert.Empty(rig.Store.StoredTags());
     }
@@ -273,7 +276,7 @@ public sealed class BoundaryUpdateFeedTests : IDisposable
         using var rig = MakeRig(req => down ? new HttpResponseMessage(status) : ok(req));
 
         var ex = await Assert.ThrowsAsync<HttpRequestException>(() => rig.Feed.RunOnceAsync(CancellationToken.None));
-        Assert.IsNotType<BoundaryRejectedException>(ex);
+        Assert.NotNull(ex);
         Assert.Same(rig.Initial, rig.Current.Set);
         Assert.Empty(rig.Store.StoredTags());
 
@@ -297,7 +300,7 @@ public sealed class BoundaryUpdateFeedTests : IDisposable
         int calls = 0;
         using var rig = MakeRig(Server(Release520, n => ++calls == 2 ? throw new HttpRequestException("connection reset") : Files520.Value.GetValueOrDefault(n)));
         var ex = await Assert.ThrowsAsync<HttpRequestException>(() => rig.Feed.RunOnceAsync(CancellationToken.None));
-        Assert.IsNotType<BoundaryRejectedException>(ex);
+        Assert.NotNull(ex);
         Assert.Same(rig.Initial, rig.Current.Set);
         Assert.Equal(FeedRunResult.Ok, await rig.Feed.RunOnceAsync(CancellationToken.None));   // not remembered as rejected
         Assert.Equal("v5.2.0", rig.Current.Set.Tag);
@@ -330,8 +333,9 @@ public sealed class BoundaryUpdateFeedTests : IDisposable
         using var scheduler = new FeedScheduler([rig.Feed], new TestClock(Noon), rig.Log, "idle");
         await scheduler.TickAsync(CancellationToken.None);
         var status = Assert.Single(scheduler.Statuses);
-        Assert.Equal(FeedState.Retrying, status.State);   // amber
-        Assert.StartsWith("Rejected v5.2.0: ", status.LastError);
+        Assert.Equal(FeedState.Attention, status.State);   // amber, not a failure
+        Assert.Equal(0, status.ConsecutiveFailures);
+        Assert.Contains(RejectedPrefix, status.Note);
         Assert.Contains("Using Natural Earth 5.1.2 (2022-05-13)", status.Note);
         Assert.Same(rig.Initial, rig.Current.Set);
     }
@@ -347,12 +351,104 @@ public sealed class BoundaryUpdateFeedTests : IDisposable
         Assert.Equal("Using Natural Earth 5.1.2 (2022-05-13); no newer release", status.Note);
     }
 
-    [Fact]
-    public async Task ReleaseWithAnUnsafeTagIsNotDownloaded()
+    [Theory]
+    [InlineData("""{"tag_name":"v5.2.0-rc1","published_at":"2026-12-01T10:00:00Z"}""", "v5.2.0-rc1")]
+    [InlineData("""{"tag_name":"../../evil","published_at":"2026-12-01T10:00:00Z"}""", "../../evil")]
+    public async Task ATagThatIsNotAVersionIsARememberedRejection(string release, string tag)
     {
-        using var rig = MakeRig(Server("""{"tag_name":"../../evil","published_at":"2026-12-01T10:00:00Z"}""", _ => null));
-        await Assert.ThrowsAsync<InvalidDataException>(() => rig.Feed.RunOnceAsync(CancellationToken.None));
+        using var rig = MakeRig(Server(release, _ => null));
+        Assert.Equal(FeedRunResult.Attention, await rig.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Contains($"Rejected {tag}: tag not understood: {tag}", rig.Feed.StatusNote);
+        Assert.Equal(FeedRunResult.Attention, await rig.Feed.RunOnceAsync(CancellationToken.None));   // 304 path too
         Assert.Equal(0, rig.Web.RawCount);
+        Assert.Single(rig.Log.Warnings, m => m.StartsWith("Rejected", StringComparison.Ordinal));   // logged once
+        Assert.Same(rig.Initial, rig.Current.Set);
+    }
+
+    [Theory]
+    [InlineData("""{"type":"FeatureCollection","features":[{"properties":{"NAME":"X","ISO_A3_EH":"XXX"},"geometry":{"type":"Polygon","coordinates":[[[1]]]}}]}""")]
+    [InlineData("""{"type":"FeatureCollection","features":[{"properties":{"NAME":"X"},"geometry":{"type":"Polygon","coordinates":[[["a","b"]]]}}]}""")]
+    [InlineData("""[1,2,3]""")]
+    [InlineData("""{"features":[null]}""")]
+    public async Task AnyExceptionFromParsingADownloadedFileIsARejectionNotARetry(string countries)
+    {
+        var bytes = Encoding.UTF8.GetBytes(countries);
+        using var rig = MakeRig(Server(Release520, n => n == NaturalEarthBoundaries.CountriesFile ? bytes : Files520.Value.GetValueOrDefault(n)));
+        Assert.Equal(FeedRunResult.Attention, await rig.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Contains(RejectedPrefix, rig.Feed.StatusNote);
+        int raws = rig.Web.RawCount;
+        Assert.Equal(FeedRunResult.Attention, await rig.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Equal(raws, rig.Web.RawCount);
+    }
+
+    [Fact]
+    public async Task SchedulerStaysAmberOnTheDailyScheduleWhileRejected()
+    {
+        var truncated = Files520.Value[NaturalEarthBoundaries.LinesFile][..5000];
+        using var rig = MakeRig(Server(Release520, n => n == NaturalEarthBoundaries.LinesFile ? truncated : Files520.Value.GetValueOrDefault(n)));
+        var clock = new TestClock(Noon);
+        using var scheduler = new FeedScheduler([rig.Feed], clock, rig.Log, "idle");
+        var dots = new GlobeCore.Wpf.Status.StatusDotsViewModel(["Borders"]);
+        scheduler.StatusChanged += (_, s) => dots.Update(s);
+
+        await scheduler.TickAsync(CancellationToken.None);
+        int requests = rig.Web.Count;
+        foreach (var minutes in new[] { 1, 3, 10, 30, 120, 600 })   // where a failing feed would be retried
+        {
+            clock.UtcNow = Noon.AddMinutes(minutes);
+            await scheduler.TickAsync(CancellationToken.None);
+        }
+        Assert.Equal(requests, rig.Web.Count);   // not run again before 24 h
+        var status = Assert.Single(scheduler.Statuses);
+        Assert.Equal(FeedState.Attention, status.State);
+        Assert.Equal(0, status.ConsecutiveFailures);
+        Assert.Equal(Noon.AddHours(24), status.NextRunUtc);
+
+        for (int day = 1; day <= 3; day++)   // three more daily runs: still amber, never red, no new download
+        {
+            clock.UtcNow = Noon.AddHours(24 * day);
+            await scheduler.TickAsync(CancellationToken.None);
+            status = Assert.Single(scheduler.Statuses);
+            Assert.Equal(FeedState.Attention, status.State);
+            Assert.Equal(0, status.ConsecutiveFailures);
+            Assert.Equal(clock.UtcNow.AddHours(24), status.NextRunUtc);
+        }
+        Assert.Equal(3, rig.Web.RawCount);   // the three files of the first attempt only
+        var dot = Assert.Single(dots.Dots);
+        Assert.Equal(GlobeCore.Wpf.Status.StatusDotsBrushes.Retrying, dot.Brush);   // amber
+        Assert.Contains("Rejected v5.2.0", dot.Tooltip);
+    }
+
+    [Fact]
+    public async Task ARejectionIsRememberedAcrossRestartsUntilANewerTagAppears()
+    {
+        var truncated = Files520.Value[NaturalEarthBoundaries.LinesFile][..5000];
+        using (var first = MakeRig(Server(Release520, n => n == NaturalEarthBoundaries.LinesFile ? truncated : Files520.Value.GetValueOrDefault(n))))
+            Assert.Equal(FeedRunResult.Attention, await first.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.True(File.Exists(Path.Combine(_dir, "boundaries", "rejected.json")));
+
+        // A new session (same store folder): the bundled set again, and the same release on the server.
+        using var second = MakeRig(Server(Release520, n => Files520.Value.GetValueOrDefault(n)));
+        Assert.Contains(RejectedPrefix, second.Feed.StatusNote);   // shown from the start
+        Assert.Equal(FeedRunResult.Attention, await second.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Equal(0, second.Web.RawCount);   // no 6 MB download just to reject it again
+        Assert.Same(second.Initial, second.Current.Set);
+
+        // A newer tag clears it.
+        using var third = MakeRig(Server("""{"tag_name":"v5.3.0","published_at":"2026-12-20T10:00:00Z"}""", n => Files520.Value.GetValueOrDefault(n)));
+        Assert.Equal(FeedRunResult.Ok, await third.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Equal("v5.3.0", third.Current.Set.Tag);
+        Assert.False(File.Exists(Path.Combine(_dir, "boundaries", "rejected.json")));
+    }
+
+    [Fact]
+    public async Task AnUnreadableRememberedRejectionIsIgnored()
+    {
+        Directory.CreateDirectory(Path.Combine(_dir, "boundaries"));
+        File.WriteAllText(Path.Combine(_dir, "boundaries", "rejected.json"), "{ not json");
+        using var rig = MakeRig(Server(Release520, n => Files520.Value.GetValueOrDefault(n)));
+        Assert.Equal(FeedRunResult.Ok, await rig.Feed.RunOnceAsync(CancellationToken.None));
+        Assert.Equal("v5.2.0", rig.Current.Set.Tag);
     }
 
     [Fact]
