@@ -44,8 +44,9 @@ Geophysics, Geosystems 4(3):1027 (PB2002). GIS conversion by Hugo Ahlenius, Nord
 Licensed under the Open Data Commons Attribution License (ODC-By) 1.0:
 https://opendatacommons.org/licenses/by/1-0/
 You are free to copy, distribute and use the data, to produce works from it and to
-modify, transform and build upon it, as long as you attribute it as above. EarthWatch3D
-merges the steps into polylines by kind and simplifies them to 0.01 degrees.
+modify, transform and build upon it, as long as you attribute it as above. The steps were
+merged into polylines by kind and simplified to 0.01 degrees (by EarthWatch3D's
+tools/prepare-assets.ps1, which writes the result into GlobeCore's Earth pack).
 
 --------------------------------------------------------------------------------
 Globe imagery: NASA Blue Marble

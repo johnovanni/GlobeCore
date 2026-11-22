@@ -1,6 +1,6 @@
 # Assets
 
-Produced by `tools/prepare-assets.ps1`. The files are public domain or free to use (the plate boundaries need the credit below).
+Prepared by EarthWatch3D's `tools/prepare-assets.ps1`, which now writes into the GlobeCore submodule (`external/GlobeCore/src/GlobeCore.Earth/Assets`) instead of the app. The files are public domain or free to use (the plate boundaries need the credit below).
 
 | File | Source | Licence |
 |---|---|---|
