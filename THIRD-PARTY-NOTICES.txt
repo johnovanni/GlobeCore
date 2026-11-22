@@ -63,6 +63,9 @@ Coastlines and borders: Natural Earth
 Natural Earth (https://www.naturalearthdata.com/), 1:50m coastline and land boundary
 lines. Public domain.
 
+Natural Earth 5.1.2 admin-0 countries (1:50m), used by GlobeCore.Earth.CountryIndex. Public domain.
+Source: https://github.com/nvkelso/natural-earth-vector (tag v5.1.2).
+
 --------------------------------------------------------------------------------
 Cloud imagery: NASA GIBS
 --------------------------------------------------------------------------------

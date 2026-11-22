@@ -1,0 +1,19 @@
+<UserControl x:Class="GlobeCore.Wpf.Status.StatusDotsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- DataContext: StatusDotsViewModel. One dot per data source; the tooltip gives the last update and error. -->
+    <ItemsControl ItemsSource="{Binding Dots}" VerticalAlignment="Center">
+        <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+            <DataTemplate>
+                <!-- A transparent cell around each dot makes the tooltip easy to hit. -->
+                <Border Background="Transparent" Padding="3,6" ToolTip="{Binding Tooltip}"
+                        ToolTipService.InitialShowDelay="200">
+                    <Ellipse Width="10" Height="10" Fill="{Binding Brush}"/>
+                </Border>
+            </DataTemplate>
+        </ItemsControl.ItemTemplate>
+    </ItemsControl>
+</UserControl>

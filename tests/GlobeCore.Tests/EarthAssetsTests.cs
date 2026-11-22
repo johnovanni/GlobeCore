@@ -15,7 +15,7 @@ public class EarthAssetsTests
     public void EveryNamedAssetExists()
     {
         Assert.Equal(["bluemarble-8192.jpg", "ne_50m_coastline.geojson", "ne_50m_admin_0_boundary_lines_land.geojson",
-                      "plate_boundaries.geojson"], EarthAssets.Names);
+                      "plate_boundaries.geojson", "ne_50m_admin_0_countries.geojson"], EarthAssets.Names);
         foreach (var name in EarthAssets.Names)
         {
             using var s = EarthAssets.Open(name);
