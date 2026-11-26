@@ -37,14 +37,30 @@ public sealed class FeedScheduler : IDisposable
     /// </summary>
     public event EventHandler<FeedStatus>? StatusChanged;
 
+    /// <summary>When a firewall challenge gives no time to try again (no <see cref="HostPauses"/> kept), the feed waits this long.</summary>
+    public static readonly TimeSpan BlockedRetry = TimeSpan.FromHours(1);
+
     /// <param name="idleNote">The tooltip note on a feed whose last run was skipped, such as "Not polled right now (layer off, replay, or not in view)".</param>
-    public FeedScheduler(IEnumerable<IFeed> feeds, IClock clock, IAppLog log, string idleNote)
+    /// <param name="lastSuccess">
+    /// When each feed last ran successfully in an earlier session, if known (its data must be on hand, loaded from a cache).
+    /// A feed whose last success is less than its <see cref="IFeed.Interval"/> ago starts as <see cref="FeedState.Ok"/> and
+    /// first runs when that interval is up, so reopening the app does not ask every source again at once. Null: every feed
+    /// runs at the first tick.
+    /// </param>
+    public FeedScheduler(IEnumerable<IFeed> feeds, IClock clock, IAppLog log, string idleNote, Func<string, DateTime?>? lastSuccess = null)
     {
         _idleNote = idleNote;
         _clock = clock;
         _log = log;
         var now = clock.UtcNow;
-        _slots = feeds.Select(f => new Slot(f, now)).ToList();
+        _slots = feeds.Select(f =>
+        {
+            var slot = new Slot(f, now);
+            // A time in the future (a changed system clock) is not trusted.
+            if (lastSuccess?.Invoke(f.Name) is { } t && t <= now && now - t < f.Interval)
+                slot.Status = new FeedStatus(f.Name, FeedState.Ok, t, null, 0, t + f.Interval);
+            return slot;
+        }).ToList();
     }
 
     public IReadOnlyList<FeedStatus> Statuses
@@ -139,6 +155,17 @@ public sealed class FeedScheduler : IDisposable
             // Shutdown, not a feed failure: leave the status alone.
             lock (_gate) slot.EndRun();
             return;
+        }
+        catch (FeedBlockedException ex)
+        {
+            // A firewall challenge is not a fault of the feed or its data: blue "paused" with the reason, the data kept, no
+            // backoff count, and the next try when the host's pause ends.
+            var now = _clock.UtcNow;
+            DateTime? lastOk;
+            lock (_gate) lastOk = slot.Status.LastSuccessUtc;
+            _log.Warn(slot.Feed.Name + ": " + ex.Message);
+            var next = ex.RetryAfterUtc is { } t && t > now ? t : now + BlockedRetry;
+            status = new FeedStatus(slot.Feed.Name, FeedState.Paused, lastOk, null, 0, next, ex.Message);
         }
         catch (Exception ex)
         {

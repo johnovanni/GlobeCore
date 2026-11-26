@@ -25,14 +25,24 @@ public sealed class FeedHttp : IDisposable
     private readonly HttpClient _client;
     private readonly TimeSpan _timeout;
     private readonly long _maxBytes;
+    private readonly HostPauses? _pauses;
+
+    /// <summary>The response header AWS WAF adds when it challenges or blocks a request ("challenge", "captcha", "block").</summary>
+    public const string WafActionHeader = "x-amzn-waf-action";
 
     /// <summary>Raised with the number of body bytes read off the wire (compressed, as downloaded).</summary>
     public event Action<long>? BytesReceived;
 
     /// <param name="userAgent">Sent on every request.</param>
-    public FeedHttp(string userAgent, HttpMessageHandler? handler = null, TimeSpan? timeout = null, long maxBodyBytes = 50L * 1024 * 1024)
+    /// <param name="pauses">
+    /// When given, a host that answers with a firewall challenge is paused (see <see cref="HostPauses"/>): until the pause
+    /// ends, requests to it throw <see cref="FeedBlockedException"/> without going to the network.
+    /// </param>
+    public FeedHttp(string userAgent, HttpMessageHandler? handler = null, TimeSpan? timeout = null, long maxBodyBytes = 50L * 1024 * 1024,
+        HostPauses? pauses = null)
     {
         _maxBytes = maxBodyBytes;
+        _pauses = pauses;
         _timeout = timeout ?? TimeSpan.FromSeconds(30);
         // Decompression is done here, so the bytes counted are the bytes that crossed the network.
         handler ??= new SocketsHttpHandler { AutomaticDecompression = DecompressionMethods.None };
@@ -92,6 +102,7 @@ public sealed class FeedHttp : IDisposable
 
     private async Task<RawResponse> SendRawAsync(Uri u, Func<HttpRequestMessage> makeRequest, CancellationToken ct, bool allowNotModified)
     {
+        if (_pauses?.PausedUntil(u.Host) is { } until) throw new FeedBlockedException(u.Host, until);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(_timeout);
         try
@@ -108,11 +119,20 @@ public sealed class FeedHttp : IDisposable
     private async Task<RawResponse> ReadAsync(HttpRequestMessage req, CancellationToken ct, bool allowNotModified)
     {
         using var resp = await _client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        var host = req.RequestUri?.Host ?? "";
+        // A firewall challenge, not data: AWS WAF answers 202 with its header and an empty HTML body. 202 is a success code,
+        // so without this the empty body would reach the caller's parser and look like a changed format.
+        if (resp.Headers.Contains(WafActionHeader) || resp.StatusCode == HttpStatusCode.Accepted)
+            throw new FeedBlockedException(host, _pauses?.Block(host));
         if (allowNotModified && resp.StatusCode == HttpStatusCode.NotModified)
+        {
+            _pauses?.Cleared(host);
             return new RawResponse(true, [], resp.Headers.ETag?.ToString());
+        }
         if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             throw new FeedAuthException(resp.StatusCode);
         resp.EnsureSuccessStatusCode();
+        _pauses?.Cleared(host);
         await using var wire = new CountingStream(await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false),
             n => BytesReceived?.Invoke(n));
         await using var s = Decoded(wire, resp.Content.Headers.ContentEncoding);
