@@ -339,4 +339,85 @@ public sealed class FeedSchedulerTests
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5));
         Assert.Equal(0, log.Warnings);
     }
+
+    private sealed class ChallengedFeed(DateTime? retryAfter) : IFeed
+    {
+        public string Name => "HNO";
+        public TimeSpan Interval => TimeSpan.FromDays(7);
+        public int Runs;
+        public bool Blocked = true;
+        public Task<FeedRunResult> RunOnceAsync(CancellationToken ct)
+        {
+            Runs++;
+            if (Blocked) throw new FeedBlockedException("data.humdata.org", retryAfter);
+            return Task.FromResult(FeedRunResult.Ok);
+        }
+    }
+
+    [Fact]
+    public async Task AFirewallChallengeIsPausedNotAFailure()
+    {
+        var clock = new FakeClock(T0);
+        var f = new ChallengedFeed(T0.AddHours(2));
+        using var s = new FeedScheduler([f], clock, new NullLog(), IdleNote);
+        await s.TickAsync(CancellationToken.None);
+        var st = s.Statuses[0];
+        Assert.Equal(FeedState.Paused, st.State);   // blue, not red: the data is kept
+        Assert.Equal(0, st.ConsecutiveFailures);
+        Assert.Null(st.LastError);
+        Assert.Equal(T0.AddHours(2), st.NextRunUtc);   // when the host's pause ends, not 30 s later
+        Assert.Equal(FeedBlockedException.MessageFor("data.humdata.org", T0.AddHours(2)), st.Note);
+
+        clock.UtcNow = T0.AddHours(2).AddSeconds(-1);
+        await s.TickAsync(CancellationToken.None);
+        Assert.Equal(1, f.Runs);
+
+        f.Blocked = false;
+        clock.UtcNow = T0.AddHours(2);
+        await s.TickAsync(CancellationToken.None);
+        Assert.Equal(FeedState.Ok, s.Statuses[0].State);
+    }
+
+    [Fact]
+    public async Task AChallengeWithNoPauseTimeWaitsAnHour()
+    {
+        var clock = new FakeClock(T0);
+        using var s = new FeedScheduler([new ChallengedFeed(null)], clock, new NullLog(), IdleNote);
+        await s.TickAsync(CancellationToken.None);
+        Assert.Equal(T0 + FeedScheduler.BlockedRetry, s.Statuses[0].NextRunUtc);
+    }
+
+    [Fact]
+    public async Task AFeedCheckedRecentlyInAnEarlierSessionWaitsForItsInterval()
+    {
+        var clock = new FakeClock(T0);
+        var recent = new FakeFeed("recent", TimeSpan.FromDays(1));
+        var old = new FakeFeed("old", TimeSpan.FromDays(1));
+        var future = new FakeFeed("future", TimeSpan.FromDays(1));
+        var never = new FakeFeed("never", TimeSpan.FromDays(1));
+        var last = new Dictionary<string, DateTime>
+        {
+            ["recent"] = T0.AddHours(-3),
+            ["old"] = T0.AddDays(-1),          // exactly one interval ago: due now
+            ["future"] = T0.AddHours(5),       // a changed system clock: not trusted
+        };
+        using var s = new FeedScheduler([recent, old, future, never], clock, new NullLog(), IdleNote,
+            name => last.TryGetValue(name, out var t) ? t : null);
+
+        var st = s.Statuses[0];
+        Assert.Equal(FeedState.Ok, st.State);   // its cached data is shown as updated then
+        Assert.Equal(T0.AddHours(-3), st.LastSuccessUtc);
+        Assert.Equal(T0.AddHours(21), st.NextRunUtc);
+        Assert.All(s.Statuses.Skip(1), x => Assert.Equal(FeedState.NotStarted, x.State));
+
+        await s.TickAsync(CancellationToken.None);
+        Assert.Equal(0, recent.Runs);
+        Assert.Equal(1, old.Runs);
+        Assert.Equal(1, future.Runs);
+        Assert.Equal(1, never.Runs);
+
+        clock.UtcNow = T0.AddHours(21);
+        await s.TickAsync(CancellationToken.None);
+        Assert.Equal(1, recent.Runs);
+    }
 }
